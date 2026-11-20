@@ -31,14 +31,14 @@ Without `DATABASE_URL` it uses an embedded Postgres (PGlite) stored in `.data/`,
 | --- | --- |
 | `JACE_CLIENT_ID` / `JACE_CLIENT_SECRET` | From your Jace account → Manage account → Developer. Register the redirect URI `https://YOUR-DOMAIN/api/auth/callback` (and `http://localhost:3000/api/auth/callback` for development). Emails need the app to be an **official** Jace app. |
 | `SESSION_SECRET` | Any long random string, used to sign session cookies. |
-| `DATABASE_URL` | Postgres connection string. On Vercel, add **Neon** from the Storage tab and this is set for you. Tables are created automatically. |
+| `DATABASE_URL` | Postgres connection string. With **Supabase** (free plan), open your project → **Connect** → copy the **Transaction pooler** URI (port 6543) and put your database password in it. Any Postgres works. Tables are created automatically. |
 | `APP_URL` | Optional. The public URL, used for links in emails. |
 
 ## Deploying to Vercel
 
 1. Import this repository in Vercel (framework: Next.js, no settings to change).
-2. Storage → Create database → **Neon (Postgres)** and connect it to the project.
-3. Add `JACE_CLIENT_ID`, `JACE_CLIENT_SECRET` and `SESSION_SECRET` under Settings → Environment Variables.
+2. Create a free **Supabase** project at supabase.com and copy its Transaction pooler connection string.
+3. Add `DATABASE_URL`, `JACE_CLIENT_ID`, `JACE_CLIENT_SECRET` and `SESSION_SECRET` under Settings → Environment Variables.
 4. Add `https://<your-project>.vercel.app/api/auth/callback` as a redirect URI on your Jace app, then redeploy.
 
 ## How it's built
