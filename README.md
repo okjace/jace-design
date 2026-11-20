@@ -1,5 +1,7 @@
 # Jace Design
 
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fokjace%2Fjace-design&env=JACE_CLIENT_ID,JACE_CLIENT_SECRET,SESSION_SECRET,DATABASE_URL)
+
 **Design anything, share it everywhere.** Jace Design is a free, open-source design tool — like Canva, but better — that uses **Sign in with Jace**.
 
 - 🎨 **Real editor** — text with 20 fonts, shapes, lines & arrows, stickers, photos with filters, gradients, shadows, outlines, layers, lock/hide, snapping guides, rotate & resize, multi-page, undo/redo, keyboard shortcuts, speaker notes, present mode.
