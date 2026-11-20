@@ -617,7 +617,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
                 {SHAPES.map(([shape, o], i) => {
                   const el = shapeEl(shape, { x: 10, y: shape === 'arrow' ? 30 : 10, w: 80, h: shape === 'arrow' ? 40 : 80, ...o, strokeWidth: o.strokeWidth ? 6 : 0, radius: o.radius ? 18 : 0 });
                   return (
-                    <button key={i} className="tile" onClick={() => addEl(shapeEl(shape, { w: 300 * k, h: (o.h || 300) * k, fill: o.fill ?? '#7c3aed', stroke: o.stroke || '#000000', strokeWidth: (o.strokeWidth || 0) * k, radius: (o.radius || 0) * k }))}>
+                    <button key={i} className="tile" onClick={() => addEl(shapeEl(shape, { w: 300 * k, h: (o.h || 300) * k, fill: o.fill ?? '#1f9d5a', stroke: o.stroke || '#000000', strokeWidth: (o.strokeWidth || 0) * k, radius: (o.radius || 0) * k }))}>
                       <MiniSvg el={el} />
                     </button>
                   );
@@ -938,8 +938,8 @@ function Props({ el, update, actions, onFont, k }) {
           <h4>Shape</h4>
           <ColorRow label="Fill" value={el.fill} onChange={(c) => update({ fill: c })} />
           <div className="toggle-row">
-            <button className={`btn ${!el.fill ? 'active' : ''}`} onClick={() => update({ fill: el.fill ? '' : '#7c3aed' })}>No fill</button>
-            <button className={`btn ${el.gradient ? 'active' : ''}`} onClick={() => update({ gradient: el.gradient ? '' : '#06b6d4', fill: el.fill || '#7c3aed' })}>Gradient</button>
+            <button className={`btn ${!el.fill ? 'active' : ''}`} onClick={() => update({ fill: el.fill ? '' : '#1f9d5a' })}>No fill</button>
+            <button className={`btn ${el.gradient ? 'active' : ''}`} onClick={() => update({ gradient: el.gradient ? '' : '#3ddc84', fill: el.fill || '#1f9d5a' })}>Gradient</button>
           </div>
           {el.gradient ? <ColorRow label="Gradient to" value={el.gradient} onChange={(c) => update({ gradient: c })} /> : null}
           <ColorRow label="Border" value={el.stroke} onChange={(c) => update({ stroke: c })} />

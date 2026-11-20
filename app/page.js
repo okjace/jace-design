@@ -41,7 +41,7 @@ export default async function Home({ searchParams }) {
           <h1>Design anything. Share it everywhere.</h1>
           <p>Posts, slides, posters, cards, resumes, logos — start from a template or a blank page, import your own files, then share, download or print. Free and open source.</p>
           <div className="row wrap" style={{ marginTop: 28 }}>
-            <a href="/api/auth/login?next=/new" className="btn btn-lg" style={{ background: '#fff', color: '#4c1d95' }}>Sign in with Jace to start</a>
+            <a href="/api/auth/login?next=/new" className="btn btn-lg" style={{ background: '#fff', color: '#157a47' }}>Sign in with Jace to start</a>
             <Link href="/explore" className="btn btn-lg" style={{ background: 'rgba(255,255,255,.18)', color: '#fff' }}>Explore designs</Link>
           </div>
         </section>

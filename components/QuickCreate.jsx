@@ -12,7 +12,7 @@ export default function QuickCreate({ presets }) {
           <span>{p.icon}</span> {p.name}
         </button>
       ))}
-      <Link href="/new" className="btn" style={{ background: '#fff', color: '#4c1d95', border: 0 }}>More: templates, imports, custom size →</Link>
+      <Link href="/new" className="btn" style={{ background: '#fff', color: '#157a47', border: 0 }}>More: templates, imports, custom size →</Link>
     </div>
   );
 }

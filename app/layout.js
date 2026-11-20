@@ -3,7 +3,6 @@ import Link from 'next/link';
 import { getUser } from '@/lib/auth';
 import { GOOGLE_FONTS_HREF } from '@/lib/design';
 import UserMenu from '@/components/UserMenu';
-import SilentSignIn from '@/components/SilentSignIn';
 
 export const metadata = {
   title: { default: 'Jace Design', template: '%s · Jace Design' },
@@ -42,7 +41,6 @@ export default async function RootLayout({ children }) {
             )}
           </div>
         </header>
-        {!user ? <SilentSignIn /> : null}
         {children}
       </body>
     </html>

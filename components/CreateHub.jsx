@@ -27,7 +27,7 @@ function outlineToDesign(text, w = 1920, h = 1080) {
       cur.body.push(line.replace(/^\s*[-*•]\s*/, '• '));
     }
   }
-  const palette = [['#7c3aed', '#06b6d4'], ['#0f172a', '#334155'], ['#f093fb', '#f5576c'], ['#43e97b', '#38f9d7']];
+  const palette = [['#1f9d5a', '#0d5c36'], ['#16181d', '#2a2f38'], ['#f093fb', '#f5576c'], ['#43e97b', '#38f9d7']];
   const pages = slides.map((s, i) => {
     const first = i === 0;
     const p = blankPage();
@@ -37,7 +37,7 @@ function outlineToDesign(text, w = 1920, h = 1080) {
       if (s.body.length) p.elements.push(textEl({ text: s.body.join('\n').replace(/^• /gm, ''), x: w * 0.08, y: h * 0.56, w: w * 0.84, fontSize: h * 0.045, color: '#ffffff', opacity: 0.9 }));
     } else {
       p.elements.push(textEl({ text: s.title, x: w * 0.08, y: h * 0.1, w: w * 0.84, fontFamily: 'Poppins', fontWeight: 700, fontSize: h * 0.08, color: '#0f172a' }));
-      p.elements.push(shapeEl('rect', { x: w * 0.08, y: h * 0.25, w: w * 0.08, h: h * 0.012, fill: '#7c3aed', radius: 4 }));
+      p.elements.push(shapeEl('rect', { x: w * 0.08, y: h * 0.25, w: w * 0.08, h: h * 0.012, fill: '#1f9d5a', radius: 4 }));
       if (s.body.length) p.elements.push(textEl({ text: s.body.join('\n'), x: w * 0.08, y: h * 0.32, w: w * 0.84, fontSize: h * 0.045, color: '#334155', lineHeight: 1.6 }));
     }
     return p;

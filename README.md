@@ -45,7 +45,7 @@ Without `DATABASE_URL` it uses an embedded Postgres (PGlite) stored in `.data/`,
 
 - Next.js (App Router), plain CSS, no UI framework.
 - Designs are JSON (`lib/design.js`): pages of elements (text, shape, line, image). One SVG renderer (`components/DesignPage.jsx`) draws them everywhere — editor, thumbnails, viewer, print — and a Canvas renderer (`lib/export.js`) makes PNG/JPG/PDF files.
-- Sign in with Jace is standard OAuth 2.0 (`app/api/auth/*`); people using Jace Browser are signed in silently with `prompt=none`.
+- Sign in with Jace is standard OAuth 2.0 (`app/api/auth/*`). Jace always shows its consent screen, so people see which account and what access Jace Design gets.
 - Emails go through `POST https://jaceo.vercel.app/api/oauth/email` with the app's client credentials (`lib/jace.js`).
 
 ## Contributing
