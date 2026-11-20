@@ -1,0 +1,76 @@
+'use client';
+import { useState } from 'react';
+import Avatar from './Avatar';
+
+const REASONS = {
+  no_email: "Your Jace account doesn't have a confirmed email yet. Add one in your Jace account settings.",
+  turned_off: 'You turned off "Emails from Jace\'s apps" in your Jace account, so Jace didn\'t send it.',
+  not_configured: "Email isn't set up on this server yet (JACE_CLIENT_ID / JACE_CLIENT_SECRET missing).",
+  rate_limited: 'Too many emails today. Try again tomorrow.',
+  unauthorized_client: 'Jace says this app is not an official Jace app, so it can’t send emails.',
+  not_found: 'Jace says you haven’t signed in to this app yet. Sign out and back in, then try again.',
+  invalid_client: 'Jace rejected the app’s client ID or secret.',
+};
+
+export default function SettingsForm({ user, configured }) {
+  const [bio, setBio] = useState(user.bio || '');
+  const [website, setWebsite] = useState(user.website || '');
+  const [notify, setNotify] = useState(user.email_notify);
+  const [status, setStatus] = useState(null);
+  const [test, setTest] = useState(null);
+  const [testing, setTesting] = useState(false);
+
+  async function save(e) {
+    e?.preventDefault();
+    setStatus({ text: 'Saving…' });
+    const r = await fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bio, website, email_notify: notify }) });
+    setStatus(r.ok ? { ok: true, text: 'Saved ✓' } : { err: true, text: 'Could not save' });
+  }
+
+  async function sendTest() {
+    setTesting(true);
+    setTest(null);
+    try {
+      const r = await fetch('/api/settings/test-email', { method: 'POST' });
+      const d = await r.json();
+      if (d.sent) setTest({ ok: true, text: 'Test email sent! It can take about 2 minutes to arrive — check your inbox (and spam).' });
+      else setTest({ err: true, text: REASONS[d.reason] || `Not sent: ${d.detail || d.reason || 'unknown error'}` });
+    } catch {
+      setTest({ err: true, text: 'Could not reach the server.' });
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  return (
+    <div className="stack" style={{ gap: 20 }}>
+      <form className="card stack" onSubmit={save}>
+        <div className="row">
+          <Avatar user={user} size={56} />
+          <div><b>{user.name}</b><div className="muted small">@{user.username}</div></div>
+          <a className="btn btn-sm" style={{ marginLeft: 'auto' }} href="https://jaceo.vercel.app" target="_blank" rel="noreferrer">Change on Jace ↗</a>
+        </div>
+        <label className="field">Bio<textarea className="input" maxLength={300} rows={3} value={bio} onChange={(e) => setBio(e.target.value)} placeholder="Tell people what you make" /></label>
+        <label className="field">Website<input className="input" maxLength={200} value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="https://…" /></label>
+        <div className="row"><button className="btn btn-primary">Save profile</button>{status ? <span className={status.err ? 'btn-danger' : 'muted'}>{status.text}</span> : null}</div>
+      </form>
+
+      <div className="card stack">
+        <h3 style={{ margin: 0 }}>📧 Emails</h3>
+        <p className="muted small" style={{ margin: 0 }}>
+          Jace Design emails you through your Jace account (we never see your address) when someone comments on, remixes or shares a design with you, or follows you.
+        </p>
+        <label className="row">
+          <input type="checkbox" checked={notify} onChange={(e) => { setNotify(e.target.checked); }} />
+          Email me about activity on Jace Design
+        </label>
+        <div className="row wrap">
+          <button className="btn" type="button" onClick={save}>Save email setting</button>
+          <button className="btn btn-primary" type="button" disabled={testing || !configured} onClick={sendTest}>{testing ? 'Sending…' : '✉️ Send test email'}</button>
+        </div>
+        {!configured ? <div className="notice">Email isn&apos;t set up on this server yet.</div> : null}
+        {test ? <div className={`notice ${test.err ? 'err' : 'ok'}`} style={{ marginBottom: 0 }}>{test.text}</div> : null}
+      </div>
+    </div>
+  );
+}

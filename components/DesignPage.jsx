@@ -1,0 +1,168 @@
+import { filterCss, HEART_PATH, lineBaseline, shapePoints, textLines } from '@/lib/design';
+
+// Renders one page of a design as SVG. Pure (no hooks) so it works on the server and the client.
+
+export function Background({ bg, w, h, pid }) {
+  if (bg?.type === 'none') return null;
+  if (!bg || bg.type === 'color') return <rect width={w} height={h} fill={bg?.color || '#ffffff'} />;
+  if (bg.type === 'gradient') {
+    const a = ((bg.angle ?? 135) - 90) * (Math.PI / 180);
+    const x = Math.cos(a) / 2;
+    const y = Math.sin(a) / 2;
+    return (
+      <>
+        <defs>
+          <linearGradient id={`bg-${pid}`} x1={0.5 - x} y1={0.5 - y} x2={0.5 + x} y2={0.5 + y}>
+            <stop offset="0" stopColor={bg.from} />
+            <stop offset="1" stopColor={bg.to} />
+          </linearGradient>
+        </defs>
+        <rect width={w} height={h} fill={`url(#bg-${pid})`} />
+      </>
+    );
+  }
+  if (bg.type === 'image') {
+    return (
+      <>
+        <rect width={w} height={h} fill={bg.color || '#ffffff'} />
+        <image href={bg.src} width={w} height={h} preserveAspectRatio="xMidYMid slice" style={{ filter: filterCss(bg.filters) }} />
+      </>
+    );
+  }
+  return <rect width={w} height={h} fill="#ffffff" />;
+}
+
+function shadowStyle(s) {
+  if (!s || !s.on) return undefined;
+  return { filter: `drop-shadow(${s.x ?? 4}px ${s.y ?? 6}px ${s.blur ?? 12}px ${s.color || 'rgba(0,0,0,0.35)'})` };
+}
+
+export function Element({ el, pid }) {
+  if (el.hidden) return null;
+  const cx = el.x + el.w / 2;
+  const cy = el.y + el.h / 2;
+  const transform = el.rotation ? `rotate(${el.rotation} ${cx} ${cy})` : undefined;
+  const common = { transform, opacity: el.opacity ?? 1, style: shadowStyle(el.shadow), 'data-id': el.id };
+  const key = `${pid}-${el.id}`;
+
+  if (el.type === 'text') {
+    const lines = textLines(el);
+    const anchor = el.align === 'center' ? 'middle' : el.align === 'right' ? 'end' : 'start';
+    const tx = el.align === 'center' ? el.x + el.w / 2 : el.align === 'right' ? el.x + el.w : el.x;
+    return (
+      <g {...common}>
+        <rect x={el.x} y={el.y} width={el.w} height={el.h} fill="transparent" />
+        {el.bgColor ? <rect x={el.x - el.fontSize * 0.25} y={el.y - el.fontSize * 0.1} width={el.w + el.fontSize * 0.5} height={el.h + el.fontSize * 0.2} rx={el.fontSize * 0.2} fill={el.bgColor} /> : null}
+        <text
+          fontFamily={`"${el.fontFamily}", sans-serif`}
+          fontSize={el.fontSize}
+          fontWeight={el.fontWeight || 400}
+          fontStyle={el.italic ? 'italic' : 'normal'}
+          textDecoration={el.underline ? 'underline' : undefined}
+          letterSpacing={el.letterSpacing || undefined}
+          fill={el.color}
+          stroke={el.strokeWidth ? el.stroke : undefined}
+          strokeWidth={el.strokeWidth || undefined}
+          paintOrder="stroke"
+          textAnchor={anchor}
+          style={{ whiteSpace: 'pre' }}
+        >
+          {lines.map((line, i) => (
+            <tspan key={i} x={tx} y={el.y + lineBaseline(el, i)}>{line || ' '}</tspan>
+          ))}
+        </text>
+      </g>
+    );
+  }
+
+  if (el.type === 'image') {
+    const clip = el.radius ? `clip-${key}` : null;
+    const flip = el.flipX || el.flipY ? `translate(${el.flipX ? 2 * el.x + el.w : 0} ${el.flipY ? 2 * el.y + el.h : 0}) scale(${el.flipX ? -1 : 1} ${el.flipY ? -1 : 1})` : undefined;
+    return (
+      <g {...common}>
+        {clip ? (
+          <defs>
+            <clipPath id={clip}><rect x={el.x} y={el.y} width={el.w} height={el.h} rx={el.radius} /></clipPath>
+          </defs>
+        ) : null}
+        <g clipPath={clip ? `url(#${clip})` : undefined}>
+          <image
+            href={el.src}
+            x={el.x} y={el.y} width={el.w} height={el.h}
+            preserveAspectRatio={el.fit === 'contain' ? 'xMidYMid meet' : 'xMidYMid slice'}
+            transform={flip}
+            style={{ filter: filterCss(el.filters) }}
+          />
+        </g>
+        {el.strokeWidth ? <rect x={el.x} y={el.y} width={el.w} height={el.h} rx={el.radius || 0} fill="none" stroke={el.stroke} strokeWidth={el.strokeWidth} /> : null}
+      </g>
+    );
+  }
+
+  if (el.type === 'line') {
+    const y = el.y + el.h / 2;
+    const sw = el.strokeWidth || 4;
+    const head = el.arrow ? sw * 3 : 0;
+    return (
+      <g {...common}>
+        <rect x={el.x} y={el.y} width={el.w} height={el.h} fill="transparent" />
+        <line x1={el.x} y1={y} x2={el.x + el.w - head * 0.8} y2={y} stroke={el.stroke} strokeWidth={sw} strokeLinecap={el.dash ? 'butt' : 'round'} strokeDasharray={el.dash ? `${sw * 2.5} ${sw * 1.5}` : undefined} />
+        {el.arrow ? <polygon points={`${el.x + el.w},${y} ${el.x + el.w - head},${y - head * 0.7} ${el.x + el.w - head},${y + head * 0.7}`} fill={el.stroke} /> : null}
+      </g>
+    );
+  }
+
+  if (el.type === 'shape') {
+    const paint = { fill: el.fill || 'none', stroke: el.strokeWidth ? el.stroke : 'none', strokeWidth: el.strokeWidth || 0 };
+    let fillDef = null;
+    if (el.gradient) {
+      paint.fill = `url(#g-${key})`;
+      fillDef = (
+        <defs>
+          <linearGradient id={`g-${key}`} x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stopColor={el.fill} />
+            <stop offset="1" stopColor={el.gradient} />
+          </linearGradient>
+        </defs>
+      );
+    }
+    let shape;
+    if (el.shape === 'rect') shape = <rect x={el.x} y={el.y} width={el.w} height={el.h} rx={el.radius || 0} {...paint} />;
+    else if (el.shape === 'ellipse') shape = <ellipse cx={cx} cy={cy} rx={el.w / 2} ry={el.h / 2} {...paint} />;
+    else if (el.shape === 'heart') shape = <path d={HEART_PATH(el.w, el.h)} transform={`translate(${el.x} ${el.y})`} {...paint} />;
+    else {
+      const pts = shapePoints(el) || [];
+      shape = <polygon points={pts.map(([px, py]) => `${el.x + px},${el.y + py}`).join(' ')} strokeLinejoin="round" {...paint} />;
+    }
+    return <g {...common}>{fillDef}{shape}</g>;
+  }
+
+  return null;
+}
+
+/**
+ * One page as an SVG. `width` can be a CSS size (e.g. "100%") — the viewBox keeps everything in design units.
+ */
+export default function DesignPage({ design, page, width = '100%', height, className, style, id, uidPrefix = '' }) {
+  const W = design.width;
+  const H = design.height;
+  const pid = `${uidPrefix}${page.id}`;
+  return (
+    <svg
+      id={id}
+      className={className}
+      style={style}
+      xmlns="http://www.w3.org/2000/svg"
+      xmlnsXlink="http://www.w3.org/1999/xlink"
+      viewBox={`0 0 ${W} ${H}`}
+      width={width}
+      height={height}
+      preserveAspectRatio="xMidYMid meet"
+    >
+      <Background bg={page.background} w={W} h={H} pid={pid} />
+      {page.elements.map((el) => (
+        <Element key={el.id} el={el} pid={pid} />
+      ))}
+    </svg>
+  );
+}

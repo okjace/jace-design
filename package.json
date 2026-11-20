@@ -1,0 +1,22 @@
+{
+  "name": "jace-design",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Jace Design — an open-source design tool (like Canva, but better) with Sign in with Jace.",
+  "license": "MIT",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.3.0",
+    "@neondatabase/serverless": "^1.0.0",
+    "jspdf": "^3.0.1",
+    "next": "^15.3.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "server-only": "^0.0.1"
+  },
+  "engines": { "node": ">=20" }
+}
