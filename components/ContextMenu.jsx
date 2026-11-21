@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 const QUICK = ['#ffffff', '#16181d', '#1f9d5a', '#3ddc84', '#155dfc', '#e40014', '#f99c00', '#fcbb00', '#7c3aed', '#ec4899'];
 
 // The editor's right-click menu. `el` is the element under the pointer (or null for the page).
-export default function ContextMenu({ x, y, el, page, colors, hasClip, act, onClose }) {
+export default function ContextMenu({ x, y, el, page, colors, fonts = [], hasClip, act, onClose }) {
   const ref = useRef(null);
   const [pos, setPos] = useState({ left: x, top: y });
 
@@ -55,6 +55,17 @@ export default function ContextMenu({ x, y, el, page, colors, hasClip, act, onCl
             <>
               <Item icon="✏️" label="Edit text" kbd="Enter" onClick={act.editText} />
               <Item icon="✨" label="Rewrite with AI" onClick={() => act.ai('text')} />
+              <div className="ctx-label">Font</div>
+              <div className="ctx-row">
+                <select
+                  className="input"
+                  value={el.fontFamily}
+                  onChange={(e) => act.font(e.target.value)}
+                  style={{ width: '100%', padding: '6px 8px', fontSize: 13, fontFamily: `"${el.fontFamily}"` }}
+                >
+                  {[...new Set([...fonts, el.fontFamily])].map((f) => <option key={f} value={f} style={{ fontFamily: `"${f}"` }}>{f}</option>)}
+                </select>
+              </div>
               <div className="ctx-label">Text color</div>
               <Swatches value={el.color} onPick={(c) => act.update({ color: c })} />
               <div className="ctx-row">

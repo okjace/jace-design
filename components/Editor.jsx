@@ -749,10 +749,11 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
       ) : null}
       {menu ? (
         <ContextMenu
-          x={menu.x} y={menu.y} el={sel} page={page} colors={colors} hasClip={!!clipRef.current}
+          x={menu.x} y={menu.y} el={sel} page={page} colors={colors} fonts={fontList} hasClip={!!clipRef.current}
           onClose={() => setMenu(null)}
           act={{
             update: (patch, opts) => updateSel(patch, opts),
+            font: (f) => { if (sel?.type !== 'text') return; updateSel({ fontFamily: f }); loadFont({ ...sel, fontFamily: f }); },
             setBg, toBackground, bgToImage, deleteSel, duplicateSel, reorder, alignSel,
             copy: () => { if (sel) clipRef.current = sel; },
             paste: () => { if (clipRef.current) { const c = { ...clipRef.current, id: uid(), x: clipRef.current.x + 24 * k, y: clipRef.current.y + 24 * k }; clipRef.current = c; addEl(c, { center: false }); } },
