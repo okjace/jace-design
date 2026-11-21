@@ -6,6 +6,7 @@ import { PRESET_GROUPS } from '@/lib/design';
 import DesignCard from '@/components/DesignCard';
 import QuickCreate from '@/components/QuickCreate';
 import DesignSearch from '@/components/DesignSearch';
+import FolderBar from '@/components/FolderBar';
 import { lighten, listCols } from '@/lib/preview';
 
 export const dynamic = 'force-dynamic';
@@ -74,19 +75,32 @@ export default async function Home({ searchParams }) {
   }
 
   const term = typeof sp?.q === 'string' ? sp.q.trim() : '';
-  const [all, shared] = await Promise.all([
+  const folder = typeof sp?.folder === 'string' ? sp.folder : '';
+  const starredOnly = folder === 'starred';
+  const [all, shared, folders] = await Promise.all([
     q(
-      `SELECT d.id, d.title, d.width, d.height, ${listCols('d')}, d.visibility, d.is_template, d.updated_at FROM designs d
-       WHERE d.owner_id = $1 AND ($2 = '' OR d.title ILIKE '%' || $2 || '%') ORDER BY d.updated_at DESC LIMIT 160`,
-      [user.id, term]
+      `SELECT d.id, d.title, d.width, d.height, ${listCols('d')}, d.visibility, d.is_template, d.updated_at, d.folder_id,
+              EXISTS (SELECT 1 FROM stars st WHERE st.user_id = $1 AND st.design_id = d.id) AS starred
+       FROM designs d
+       WHERE d.owner_id = $1 AND ($2 = '' OR d.title ILIKE '%' || $2 || '%')
+         AND ($3 = '' OR $3 = 'starred' OR d.folder_id = $3)
+         AND ($3 <> 'starred' OR EXISTS (SELECT 1 FROM stars st WHERE st.user_id = $1 AND st.design_id = d.id))
+       ORDER BY d.updated_at DESC LIMIT 160`,
+      [user.id, term, folder]
     ).then(lighten),
     q(
-      `SELECT d.id, d.title, d.width, d.height, ${listCols('d')}, s.role, s.perms, u.username, u.name, u.picture
+      `SELECT d.id, d.title, d.width, d.height, ${listCols('d')}, s.role, s.perms, u.username, u.name, u.picture,
+              EXISTS (SELECT 1 FROM stars st WHERE st.user_id = $1 AND st.design_id = d.id) AS starred
        FROM shares s JOIN designs d ON d.id = s.design_id JOIN users u ON u.id = d.owner_id
-       WHERE s.user_id = $1 ORDER BY s.created_at DESC LIMIT 60`,
-      [user.id]
+       WHERE s.user_id = $1 AND ($2 = '' OR d.title ILIKE '%' || $2 || '%')
+         AND ($3 = '' OR ($3 = 'starred' AND EXISTS (SELECT 1 FROM stars st WHERE st.user_id = $1 AND st.design_id = d.id)))
+       ORDER BY s.created_at DESC LIMIT 60`,
+      [user.id, term, folder]
     ).then(lighten),
+    q(`SELECT f.id, f.name, (SELECT COUNT(*)::int FROM designs d WHERE d.folder_id = f.id AND d.owner_id = $1) AS count
+       FROM folders f WHERE f.owner_id = $1 ORDER BY LOWER(f.name)`, [user.id]).catch(() => []),
   ]);
+  const inFolder = folders.find((f) => f.id === folder);
   const mine = all.filter((d) => !d.is_template);
   const templates = all.filter((d) => d.is_template);
   const allPresets = PRESET_GROUPS.flatMap((g) => g.items);
@@ -104,17 +118,17 @@ export default async function Home({ searchParams }) {
         <QuickCreate presets={quick} />
       </section>
       <div className="row" style={{ marginTop: 32 }}>
-        <h2 style={{ margin: 0 }} className="grow">Your designs</h2>
+        <h2 style={{ margin: 0 }} className="grow">{starredOnly ? '⭐ Starred' : inFolder ? `📁 ${inFolder.name}` : 'Your designs'}</h2>
         <DesignSearch initial={term} />
       </div>
-      <div style={{ height: 16 }} />
+      <FolderBar folders={folders} active={folder} />
       {mine.length ? (
-        <div className="grid">{mine.map((d) => <DesignCard key={d.id} d={d} mine />)}</div>
+        <div className="grid">{mine.map((d) => <DesignCard key={d.id} d={d} mine folders={folders} />)}</div>
       ) : (
         <div className="card center">
-          <p style={{ fontSize: 40, margin: 0 }}>🎨</p>
-          <p>{term ? `No designs match “${term}”.` : 'No designs yet. Make your first one!'}</p>
-          <Link href="/new" className="btn btn-primary">Create a design</Link>
+          <p style={{ fontSize: 40, margin: 0 }}>{starredOnly ? '⭐' : inFolder ? '📁' : '🎨'}</p>
+          <p>{term ? `No designs match “${term}”.` : starredOnly ? 'Nothing starred yet. Press ☆ on a design to star it.' : inFolder ? 'This folder is empty. Use 📁 on a design to move it here.' : 'No designs yet. Make your first one!'}</p>
+          {!starredOnly && !inFolder ? <Link href="/new" className="btn btn-primary">Create a design</Link> : null}
         </div>
       )}
       {shared.length ? (
@@ -127,7 +141,7 @@ export default async function Home({ searchParams }) {
           </div>
         </>
       ) : null}
-      {templates.length ? (
+      {templates.length && !folder ? (
         <>
           <h2>Your templates</h2>
           <div className="grid">{templates.map((d) => <DesignCard key={d.id} d={d} mine />)}</div>

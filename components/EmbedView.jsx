@@ -24,7 +24,7 @@ export default function EmbedView({ id, title, design }) {
       ) : (
         <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 8 }}
           onClick={() => setI((x) => (x + 1) % n)}>
-          <DesignPage design={design} page={design.pages[i]} width="100%" height="100%" uidPrefix="em-" />
+          <DesignPage design={design} page={design.pages[i]} width="100%" height="100%" uidPrefix="em-" media="controls" />
         </div>
       )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 12px', color: '#ddd', fontSize: 13, background: '#000' }}>

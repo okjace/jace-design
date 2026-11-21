@@ -50,7 +50,10 @@ function SlidePlayer({ design, from, to, onDone }) {
   return <canvas ref={ref} style={{ display: 'block' }} />;
 }
 
-export default function Presenter({ design, start = 0, onClose }) {
+export default function Presenter({ design, start = 0, onClose, remoteId }) {
+  const [remote, setRemote] = useState(false); // let people follow along at /d/[id]/live
+  const [copied, setCopied] = useState(false);
+  const liveUrl = remoteId && typeof location !== 'undefined' ? `${location.origin}/d/${remoteId}/live` : '';
   const [i, setI] = useState(start);
   const [ready, setReady] = useState(false); // false until they press OK on the "Esc exits" notice
   const [playing, setPlaying] = useState(null); // { from, to } while a slide's transition/animations play
@@ -111,6 +114,21 @@ export default function Presenter({ design, start = 0, onClose }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [i, ready]);
 
+  // Remote presenting: tell followers which slide is showing (and keep reminding them while presenting).
+  useEffect(() => {
+    if (!remote || !ready || !remoteId) return undefined;
+    const say = (body) => fetch(`/api/designs/${remoteId}/present`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), keepalive: true }).catch(() => {});
+    say({ page: i });
+    const t = setInterval(() => say({ page: i }), 10_000);
+    return () => clearInterval(t);
+  }, [remote, ready, remoteId, i]);
+  useEffect(() => {
+    if (!remote || !remoteId) return undefined;
+    const end = () => fetch(`/api/designs/${remoteId}/present`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on: false }), keepalive: true }).catch(() => {});
+    window.addEventListener('pagehide', end);
+    return () => { window.removeEventListener('pagehide', end); end(); };
+  }, [remote, remoteId]);
+
   function begin() {
     setReady(true);
     // Called from a click/keypress, so the browser allows fullscreen. If it's refused, present in the window.
@@ -118,19 +136,34 @@ export default function Presenter({ design, start = 0, onClose }) {
   }
 
   return (
-    <div className="present" ref={ref} onClick={() => ready && setI((x) => (x + 1 < n ? x + 1 : x))}>
+    <div className="present" ref={ref} onClick={(e) => { if (e.target.closest?.('video, audio')) return; if (ready) setI((x) => (x + 1 < n ? x + 1 : x)); }}>
       {playing && ready
         ? <SlidePlayer key={`${playing.from}-${playing.to}`} design={design} from={playing.from} to={playing.to} onDone={() => setPlaying(null)} />
-        : <DesignPage design={design} page={design.pages[Math.min(i, n - 1)]} width="100%" height="100%" uidPrefix="present-" />}
+        : <DesignPage design={design} page={design.pages[Math.min(i, n - 1)]} width="100%" height="100%" uidPrefix="present-" media="autoplay" />}
       {ready ? (
-        <div className="present-hint">{i + 1} / {n} · ← → to move</div>
+        <div className="present-hint">{remote ? '📡 Live · ' : ''}{i + 1} / {n} · ← → to move</div>
       ) : (
         <div className="present-notice" onClick={(e) => e.stopPropagation()}>
           <div className="present-card">
             <div style={{ fontSize: 34 }}>⌨️</div>
             <b style={{ fontSize: 18 }}>Press Esc to exit</b>
             <span>Use ← → or click to change slides.</span>
-            <button ref={okRef} className="btn btn-primary" onClick={begin}>OK</button>
+            {remoteId ? (
+              <div className="present-remote">
+                <label className="row small" style={{ gap: 6, justifyContent: 'center' }}>
+                  <input type="checkbox" checked={remote} onChange={(e) => setRemote(e.target.checked)} />
+                  📡 Present remotely: people with the link follow along
+                </label>
+                {remote ? (
+                  <div className="row" style={{ gap: 6 }}>
+                    <input className="input" readOnly value={liveUrl} onFocus={(e) => e.target.select()} style={{ fontSize: 12 }} />
+                    <button className="btn btn-sm" onClick={async () => { try { await navigator.clipboard.writeText(liveUrl); setCopied(true); } catch {} }}>{copied ? 'Copied' : 'Copy'}</button>
+                  </div>
+                ) : null}
+                {remote ? <span className="small">Viewers need access to the design (see Share).</span> : null}
+              </div>
+            ) : null}
+            <button ref={okRef} className="btn btn-primary" onClick={begin}>{remote ? 'Start presenting' : 'OK'}</button>
           </div>
         </div>
       )}

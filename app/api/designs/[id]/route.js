@@ -41,6 +41,12 @@ export const PUT = handler(async (request, { params }) => {
   if (role === 'owner' && typeof body.category === 'string') { vals.push(body.category.slice(0, 40)); sets.push(`category = $${vals.length}`); }
   if (role === 'owner' && typeof body.is_template === 'boolean') { vals.push(body.is_template); sets.push(`is_template = $${vals.length}`); }
   if (role === 'owner' && ['private', 'link', 'public'].includes(body.visibility)) { vals.push(body.visibility); sets.push(`visibility = $${vals.length}`); }
+  // Move to a folder (or out of one with null).
+  if (role === 'owner' && 'folder_id' in body) {
+    const fid = body.folder_id ? String(body.folder_id) : null;
+    if (fid && !(await one('SELECT 1 AS x FROM folders WHERE id = $1 AND owner_id = $2', [fid, user.id]))) return json({ error: 'No such folder' }, 400);
+    vals.push(fid); sets.push(`folder_id = $${vals.length}`);
+  }
   if (!sets.length) return json({ ok: true });
   // Only real edits (content or title) count as a new version; thumbnails and sharing settings don't.
   const edit = !!body.design || typeof body.title === 'string';

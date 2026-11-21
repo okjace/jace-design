@@ -73,7 +73,7 @@ export default function DesignViewer({ id, title, design, role, perms = ALL, sig
           </div>
         ) : (
           <div style={{ width: '100%', maxWidth: `calc(70vh * ${design.width / design.height})`, aspectRatio: `${design.width} / ${design.height}`, boxShadow: '0 8px 30px rgba(0,0,0,.18)' }}>
-            <DesignPage design={design} page={design.pages[i]} width="100%" height="100%" uidPrefix="v-" style={{ display: 'block' }} />
+            <DesignPage design={design} page={design.pages[i]} width="100%" height="100%" uidPrefix="v-" style={{ display: 'block' }} media="controls" />
           </div>
         )}
         {n > 1 ? (

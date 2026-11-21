@@ -16,6 +16,7 @@ import IconSearch, { iconDataUrl } from './IconSearch';
 import BrandKit, { useBrand } from './BrandKit';
 import VersionHistory from './VersionHistory';
 import Timeline from './Timeline';
+import Mockups from './Mockups';
 import { LiveLayer, useLive } from './LiveCursors';
 import { CHART_COLORS, CHART_TYPES, audioEl, chartEl, chartToCsv, clipLength, csvToChart, qrEl, resolveBg, tableEl, videoEl } from '@/lib/blocks';
 import { audioDuration, uploadMedia, videoInfo } from '@/lib/media';
@@ -1120,6 +1121,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
               {isVideo ? <button onClick={() => runExport('video')}>🎬 Video <small>MP4, 720p</small></button> : null}
               {isVideo ? <button onClick={() => runExport('video-hd')}>🎞 Video HD <small>full size</small></button> : null}
               <button onClick={() => runExport('json')}>💾 Jace Design file <small>re-import later</small></button>
+              <button onClick={() => setModal('mockups')}>📱 Mockup <small>on a phone, shirt…</small></button>
             </div>
           ) : null}
         </div>
@@ -1731,8 +1733,17 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
         <ShareModal id={id} title={title} role={role} visibility={visibility} onVisibility={changeVisibility} onClose={() => setModal(null)}
           onPrint={print} onDownload={() => setModal('download')} />
       ) : null}
+      {modal === 'mockups' ? (
+        <Mockups design={design} title={title} pageIndex={pi} onClose={() => setModal(null)}
+          onAddPage={(src, w, h) => {
+            const s2 = Math.min(W / w, H / h);
+            const np = { ...blankPage('#ffffff'), elements: [imageEl({ src, x: (W - w * s2) / 2, y: (H - h * s2) / 2, w: w * s2, h: h * s2 })] };
+            commit((d) => { const pages = [...d.pages]; pages.splice(pi + 1, 0, np); return { ...d, pages }; });
+            setPageIdx(pi + 1); setSelId(null);
+          }} />
+      ) : null}
       {modal === 'history' ? <VersionHistory id={id} beforeSave={saveNow} onClose={() => setModal(null)} /> : null}
-      {modal === 'present' ? <Presenter design={design} start={pi} onClose={() => setModal(null)} /> : null}
+      {modal === 'present' ? <Presenter design={design} start={pi} remoteId={id} onClose={() => setModal(null)} /> : null}
       {modal === 'play' ? (
         <div className="modal-back" onMouseDown={(e) => e.target === e.currentTarget && setModal(null)}>
           <div className="video-modal">

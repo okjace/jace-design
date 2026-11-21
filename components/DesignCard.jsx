@@ -55,9 +55,24 @@ export function Thumb({ data, uid, thumb }) {
 
 const VIS = { private: 'Private', link: 'Anyone with link', public: 'Public' };
 
-export default function DesignCard({ d, mine, author, href }) {
+export default function DesignCard({ d, mine, author, href, folders }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  const [starred, setStarred] = useState(!!d.starred);
+  const [pickFolder, setPickFolder] = useState(false);
+  async function star() {
+    const on = !starred;
+    setStarred(on);
+    const r = await fetch(`/api/designs/${d.id}/star`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on }) });
+    if (!r.ok) setStarred(!on); else router.refresh();
+  }
+  async function moveTo(folderId) {
+    setPickFolder(false);
+    setBusy(true);
+    await fetch(`/api/designs/${d.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ folder_id: folderId || null }) });
+    setBusy(false);
+    router.refresh();
+  }
   const target = href || (mine ? `/design/${d.id}` : `/d/${d.id}`);
 
   async function act(kind) {
@@ -82,12 +97,23 @@ export default function DesignCard({ d, mine, author, href }) {
   return (
     <div className="dcard" style={busy ? { opacity: 0.5 } : undefined}>
       <Link href={target}><Thumb data={d.data} uid={d.id} thumb={d.thumb} /></Link>
+      {d.starred !== undefined ? (
+        <button className={`dcard-star ${starred ? 'on' : ''}`} title={starred ? 'Unstar' : 'Star'} onClick={star}>{starred ? '★' : '☆'}</button>
+      ) : null}
       {mine ? (
         <div className="dcard-menu row">
           <button className="btn btn-sm" title="Rename" onClick={() => act('rename')}>✏️</button>
           <button className="btn btn-sm" title="Make a copy" onClick={() => act('copy')}>⧉</button>
+          {folders ? <button className="btn btn-sm" title="Move to a folder" onClick={() => setPickFolder(!pickFolder)}>📁</button> : null}
           <Link className="btn btn-sm" title="View page" href={`/d/${d.id}`}>👁</Link>
           <button className="btn btn-sm" title="Delete" onClick={() => act('delete')}>🗑</button>
+        </div>
+      ) : null}
+      {pickFolder ? (
+        <div className="dcard-folders">
+          <button className={!d.folder_id ? 'active' : ''} onClick={() => moveTo(null)}>No folder</button>
+          {folders.map((f) => <button key={f.id} className={d.folder_id === f.id ? 'active' : ''} onClick={() => moveTo(f.id)}>📁 {f.name}</button>)}
+          {!folders.length ? <span className="small muted">Make a folder first (＋ New folder above).</span> : null}
         </div>
       ) : null}
       <Link href={target} className="dcard-title">{d.title}</Link>

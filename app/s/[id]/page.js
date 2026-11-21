@@ -48,7 +48,7 @@ export default async function SitePage({ params }) {
       <div id="top" />
       {sections.map(({ page, anchor }, i) => (
         <section key={page.id} id={anchor} className="site-section" style={{ aspectRatio: `${W} / ${H}` }}>
-          <DesignPage design={d} page={page} width="100%" height="100%" uidPrefix={`s${i}-`} style={{ display: 'block' }} />
+          <DesignPage design={d} page={page} width="100%" height="100%" uidPrefix={`s${i}-`} style={{ display: 'block' }} media="controls" />
           {page.elements.filter((e) => safeLink(e.link) && !e.hidden).map((e) => {
             const href = safeLink(e.link);
             const external = /^https?:/i.test(href);
