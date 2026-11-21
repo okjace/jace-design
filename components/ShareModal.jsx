@@ -323,7 +323,7 @@ function PeopleList({ id, reloadKey }) {
   async function patch(body) {
     setData((d) => d && {
       ...d,
-      people: d.people.map((p) => {
+      people: (body.action === 'remove' ? d.people.filter((p) => p.key !== body.key) : d.people).map((p) => {
         if (p.key !== body.key) return p;
         if (body.action === 'block') return { ...p, status: 'blocked', custom: true, perms: NO_ACCESS, effective: NO_ACCESS };
         if (body.action === 'reset') return { ...p, status: 'link', custom: false, perms: null, effective: d.link_open ? d.link_perms : NO_ACCESS };
@@ -388,10 +388,27 @@ function PersonRow({ p, linkOpen, onPatch }) {
         {p.status === 'blocked'
           ? <button className="btn btn-sm" onClick={() => onPatch({ key: p.key, action: 'reset' })}>Unblock</button>
           : <button className="btn btn-sm btn-danger" onClick={() => onPatch({ key: p.key, action: 'block' })}>Block</button>}
-        {p.custom && p.status !== 'blocked' ? (
-          <button className="btn btn-sm" onClick={() => onPatch({ key: p.key, action: 'reset' })} title={linkOpen ? 'Use the same permissions as anyone with the link' : 'Remove their access'}>
-            {linkOpen ? 'Use link settings' : 'Remove access'}
+        {p.custom && p.status !== 'blocked' && linkOpen ? (
+          <button className="btn btn-sm" onClick={() => onPatch({ key: p.key, action: 'reset' })} title="Use the same permissions as anyone with the link">
+            Use link settings
           </button>
+        ) : null}
+        <span className="grow" />
+        {p.status !== 'blocked' ? (
+          <button
+            className="btn btn-sm"
+            title="Take away their access and remove them from this list"
+            onClick={() => {
+              if (linkOpen) {
+                // With the link open they could just come back, so removing means blocking.
+                if (confirm(`Anyone with the link can still open this design, so ${p.name} could get back in.\n\nBlock ${p.name} instead? (You can unblock them later.)`)) {
+                  onPatch({ key: p.key, action: 'block' });
+                }
+              } else if (confirm(`Remove ${p.name}? They won't be able to open this design anymore.`)) {
+                onPatch({ key: p.key, action: 'remove' });
+              }
+            }}
+          >🗑 Remove</button>
         ) : null}
       </div>
     </div>

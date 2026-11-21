@@ -41,6 +41,7 @@ async function people(design) {
   }
   for (const g of grants) {
     const key = g.user_id ? `u:${g.user_id}` : gkey(g.guest_token);
+    if (g.status === 'revoked') continue; // removed or reset: only listed if they've visited
     const p = get(key, g.user_id
       ? { kind: 'user', user_id: g.user_id, username: g.username, name: g.name || g.username, picture: g.picture }
       : { kind: 'guest', guest_token: g.guest_token, name: g.guest_name || 'Guest' });
@@ -83,7 +84,9 @@ export const PATCH = handler(async (request, { params }) => {
   const id = design.id;
   const body = await request.json();
   const key = String(body.key || '');
-  const action = body.action === 'block' ? 'block' : body.action === 'reset' ? 'reset' : 'set';
+  // 'remove' = take away their own access and drop them from the list.
+  const removing = body.action === 'remove';
+  const action = body.action === 'block' ? 'block' : body.action === 'reset' || removing ? 'reset' : 'set';
   const perms = action === 'block' ? NONE : cleanPerms(body.perms, PRESETS.view);
 
   if (key.startsWith('u:')) {
@@ -92,6 +95,7 @@ export const PATCH = handler(async (request, { params }) => {
     if (action === 'reset') {
       await q('DELETE FROM shares WHERE design_id = $1 AND user_id = $2', [id, userId]);
       await q(`INSERT INTO access_requests (id, design_id, user_id, status) VALUES ($1, $2, $3, 'revoked')`, [newId(), id, userId]);
+      if (removing) await q('DELETE FROM design_visitors WHERE design_id = $1 AND user_id = $2', [id, userId]);
     } else {
       await q(`INSERT INTO shares (design_id, user_id, role, perms) VALUES ($1, $2, $3, $4::text::jsonb)
                ON CONFLICT (design_id, user_id) DO UPDATE SET role = EXCLUDED.role, perms = EXCLUDED.perms`,
@@ -108,6 +112,7 @@ export const PATCH = handler(async (request, { params }) => {
     const status = action === 'block' ? 'blocked' : action === 'reset' ? 'revoked' : 'approved';
     await q(`INSERT INTO access_requests (id, design_id, guest_token, guest_name, status, perms) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb)`,
       [newId(), id, token, known.guest_name, status, action === 'set' ? JSON.stringify(perms) : null]);
+    if (removing) await q('DELETE FROM design_visitors WHERE design_id = $1 AND guest_token = $2', [id, token]);
   } else {
     return json({ error: 'Unknown person' }, 400);
   }
