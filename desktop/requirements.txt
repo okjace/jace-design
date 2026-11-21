@@ -1,0 +1,2 @@
+PySide6>=6.9,<6.10   # 6.10+ needs newer Windows (icuuc.dll) and macOS 13; 6.9 keeps Wine and macOS 12 working
+requests>=2.31

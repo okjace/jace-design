@@ -1,0 +1,10 @@
+"""Jace Design desktop app - the Jace Design website in its own window, with a self-installer and updates."""
+
+APP_NAME = "Jace Design"
+APP_VERSION = "1.0.0"
+AUTHOR = "jace.deb"
+GITHUB_REPO = "okjace/jace-design"
+GITHUB_URL = f"https://github.com/{GITHUB_REPO}"
+SITE_URL = "https://jace-design.vercel.app"
+USER_AGENT = f"JaceDesign/{APP_VERSION} (+{GITHUB_URL})"
+APP_RELEASE_DATE = "2026-11-21"

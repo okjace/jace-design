@@ -5,3 +5,8 @@ node_modules
 .env*.local
 .vercel
 *.log
+desktop/build
+desktop/dist
+desktop/.venv
+desktop/packaging/tools
+__pycache__

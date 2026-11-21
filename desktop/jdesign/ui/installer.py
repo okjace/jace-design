@@ -1,0 +1,241 @@
+"""Setup wizard shown the first time the downloaded app runs (or with --install). Same flow as Jace Launcher."""
+import shutil
+import sys
+from pathlib import Path
+
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QPixmap
+from PySide6.QtWidgets import (QApplication, QCheckBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
+                               QPlainTextEdit, QPushButton, QVBoxLayout, QWizard, QWizardPage)
+
+from jdesign import APP_VERSION, desktop, macinstall
+from jdesign.ui.tasks import run_task
+
+IS_MAC = sys.platform == "darwin"
+IS_WIN = sys.platform == "win32"
+
+
+def _muted(text):
+    lab = QLabel(text)
+    lab.setObjectName("muted")
+    lab.setWordWrap(True)
+    return lab
+
+
+class WelcomePage(QWizardPage):
+    def __init__(self, upgrade: bool):
+        super().__init__()
+        self.setTitle("Update Jace Design" if upgrade else "Welcome to Jace Design")
+        lay = QVBoxLayout(self)
+        row = QHBoxLayout()
+        icon = QLabel()
+        icon.setPixmap(QPixmap(str(desktop.ICON_SRC)).scaled(
+            96, 96, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        row.addWidget(icon, 0, Qt.AlignmentFlag.AlignTop)
+        text = QLabel(
+            f"<p style='font-size:15px'>This will set up <b>Jace Design {APP_VERSION}</b> on your computer.</p>"
+            "<p>Design posts, slides, posters, documents and videos, and sign in with your Jace account.</p>"
+            "<p>The next steps will:</p><ul><li>choose where to install Jace Design</li>"
+            + ("<li>add it to the Dock, Launchpad and your desktop</li>"
+               "<li>stop macOS from warning that the app is \"damaged\"</li></ul>" if IS_MAC else
+               "<li>add it to the Start menu and your desktop</li>"
+               "<li>list it in Windows \"Installed apps\" so it's easy to uninstall</li></ul>" if IS_WIN else
+               "<li>add it to your applications menu and desktop</li>"
+               "<li>register it with GNOME Software and other app centers</li></ul>")
+            + ("<p>A version is already installed; it will be replaced. You stay signed in.</p>" if upgrade else ""))
+        text.setWordWrap(True)
+        row.addWidget(text, 1)
+        lay.addLayout(row)
+        lay.addStretch()
+        lay.addWidget(_muted("Jace Design needs to be installed before you can use it."))
+
+
+class LocationPage(QWizardPage):
+    def __init__(self):
+        super().__init__()
+        self.setTitle("Choose install location and shortcuts")
+        lay = QVBoxLayout(self)
+        lay.addWidget(QLabel("Install Jace Design to:"))
+        row = QHBoxLayout()
+        current = desktop.installed_path()
+        self.path = QLineEdit(str(current.parent if current else desktop.default_install_dir()))
+        browse = QPushButton("Browse…")
+        browse.clicked.connect(self._browse)
+        row.addWidget(self.path, 1)
+        row.addWidget(browse)
+        lay.addLayout(row)
+        self.space = _muted("")
+        lay.addWidget(self.space)
+        self.path.textChanged.connect(self._update_space)
+        self._update_space()
+        lay.addSpacing(12)
+        self.options = {}
+        for key, label, default in desktop.install_options():
+            cb = QCheckBox(label)
+            cb.setChecked(default)
+            self.options[key] = cb
+            lay.addWidget(cb)
+        if IS_MAC:
+            lay.addWidget(_muted("Mac apps normally live in Applications. macOS may ask permission to let Jace Design "
+                                 "update the Dock or your Desktop - click OK."))
+        elif IS_WIN:
+            lay.addWidget(_muted("The default folder is just for you and doesn't need administrator rights."))
+        else:
+            lay.addWidget(_muted("App centers list apps using AppStream info; this adds Jace Design's description, "
+                                 "icon and keywords so app centers that read local metadata can recognise it."))
+        lay.addStretch()
+
+    def chosen_options(self) -> dict:
+        return {k: cb.isChecked() for k, cb in self.options.items()}
+
+    def _browse(self):
+        d = QFileDialog.getExistingDirectory(self, "Install location", self.path.text())
+        if d:
+            self.path.setText(d)
+
+    def _update_space(self):
+        p = Path(self.path.text()).expanduser()
+        while not p.exists() and p != p.parent:
+            p = p.parent
+        try:
+            free = shutil.disk_usage(p).free / 1024 ** 3
+            self.space.setText(f"{free:.1f} GB free there. Jace Design needs about 0.4 GB.")
+        except OSError:
+            self.space.setText("")
+
+    def validatePage(self):
+        if not self.path.text().strip():
+            QMessageBox.warning(self, "Choose a folder", "Pick a folder to install Jace Design into.")
+            return False
+        p = Path(self.path.text()).expanduser()
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+            probe = p / ".jace-write-test"
+            probe.write_text("")
+            probe.unlink()
+        except OSError as e:
+            QMessageBox.warning(self, "Can't install there", f"That folder isn't writable:\n{e}")
+            return False
+        return True
+
+
+class InstallPage(QWizardPage):
+    def __init__(self, loc: LocationPage):
+        super().__init__()
+        self.loc = loc
+        self.setTitle("Installing")
+        lay = QVBoxLayout(self)
+        self.log = QPlainTextEdit()
+        self.log.setReadOnly(True)
+        lay.addWidget(self.log)
+        self.finished_ok = False
+        self.result_path = None
+
+    def initializePage(self):
+        self.finished_ok = False
+        self.log.clear()
+        self.wizard().button(QWizard.WizardButton.BackButton).setEnabled(False)
+        loc = self.loc
+
+        def work(callback):
+            return desktop.install_app(Path(loc.path.text()).expanduser(), loc.chosen_options(), status=callback["setStatus"])
+
+        def done(path):
+            self.result_path = path
+            self.finished_ok = True
+            self.log.appendPlainText(f"\nJace Design is installed at {path}")
+            self.completeChanged.emit()
+            self.wizard().next()
+
+        def fail(msg):
+            self.log.appendPlainText(f"\nInstall failed: {msg}")
+            self.wizard().button(QWizard.WizardButton.BackButton).setEnabled(True)
+        run_task(work, use_callback=True, on_done=done, on_error=fail, on_status=self.log.appendPlainText)
+
+    def isComplete(self):
+        return self.finished_ok
+
+
+class FinishPage(QWizardPage):
+    def __init__(self, install: InstallPage):
+        super().__init__()
+        self.install = install
+        self.setTitle("All set!")
+        lay = QVBoxLayout(self)
+        self.summary = QLabel()
+        self.summary.setWordWrap(True)
+        lay.addWidget(self.summary)
+        lay.addStretch()
+        self.launch = QCheckBox("Start Jace Design now")
+        self.launch.setChecked(True)
+        lay.addWidget(self.launch)
+
+    def initializePage(self):
+        parts = desktop.install_record().get("parts", [])
+        lines = [f"Installed to <b>{self.install.result_path}</b>"]
+        lines += [f"✓ {desktop.PART_DESCRIPTIONS[p]}" for p in parts if p in desktop.PART_DESCRIPTIONS]
+        if "desktop" in parts and not (IS_MAC or IS_WIN):
+            lines.append("(on GNOME you may need the Desktop Icons extension to see desktop shortcuts)")
+        lines.append("<br>Sign in with your Jace account inside the app. You'll stay signed in.")
+        if IS_MAC:
+            if macinstall.download_left_behind():
+                lines.append("You can delete the downloaded Jace Design from your Downloads folder now.")
+            lines.append("To uninstall later, use Help → Delete Jace Design.")
+        elif IS_WIN:
+            lines.append("The downloaded setup file is removed automatically. To uninstall later, use "
+                         "Help → Delete Jace Design, or Windows Settings → Apps → Installed apps.")
+        else:
+            lines.append("To uninstall later, right-click Jace Design in the applications menu → "
+                         "<i>Uninstall Jace Design</i>, or use Help → Delete Jace Design.")
+        self.summary.setText("<br>".join(lines))
+
+
+class SetupWizard(QWizard):
+    def __init__(self, parent=None, required=True):
+        super().__init__(parent)
+        self.required = required
+        self.setWindowTitle("Jace Design Setup")
+        self.setWizardStyle(QWizard.WizardStyle.ClassicStyle)
+        self.setStyleSheet("QWizard, QWizardPage { background: #16181d; }"
+                           "QWizard QLabel#qt_wizard_title { font-size: 19px; font-weight: 700; }")
+        self.setOption(QWizard.WizardOption.NoBackButtonOnLastPage)
+        self.resize(680, 500)
+        self.welcome = WelcomePage(desktop.is_installed())
+        self.loc = LocationPage()
+        self.install_page = InstallPage(self.loc)
+        self.finish = FinishPage(self.install_page)
+        for p in (self.welcome, self.loc, self.install_page, self.finish):
+            self.addPage(p)
+        self.setButtonText(QWizard.WizardButton.CommitButton, "Install")
+        self.loc.setCommitPage(True)
+
+    def reject(self):
+        if self.required and self.currentPage() is not self.finish and QMessageBox.question(
+                self, "Quit setup?", "Jace Design has to be installed before you can use it.\n\n"
+                "Quit setup and close Jace Design?") != QMessageBox.StandardButton.Yes:
+            return
+        super().reject()
+
+    def launch_after(self) -> bool:
+        return self.finish.launch.isChecked()
+
+
+def confirm_uninstall(parent=None) -> bool:
+    """Ask, then delete Jace Design (and optionally the saved sign-in). Returns True if deleted."""
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Warning)
+    box.setWindowTitle("Delete Jace Design")
+    box.setText("<b>Delete Jace Design from this computer?</b>")
+    box.setInformativeText("This removes:<ul>" + "".join(f"<li>{r}</li>" for r in desktop.removal_summary())
+                           + "</ul>Your designs are safe: they're saved in your Jace Design account online.")
+    purge = QCheckBox("Also sign out and delete the app's settings")
+    box.setCheckBox(purge)
+    delete = box.addButton("Delete", QMessageBox.ButtonRole.DestructiveRole)
+    box.addButton(QMessageBox.StandardButton.Cancel)
+    box.exec()
+    if box.clickedButton() is not delete:
+        return False
+    desktop.delete_app(remove_data=purge.isChecked())
+    QMessageBox.information(parent, "Deleted", "Jace Design has been deleted. The app will now close.")
+    QApplication.quit()
+    return True

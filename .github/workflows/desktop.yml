@@ -1,0 +1,214 @@
+# Builds the Jace Design desktop app for Windows, macOS and Linux on GitHub's runners (same setup as Jace Launcher).
+# Every push that touches desktop/ uploads the builds as workflow artifacts.
+# When APP_VERSION in desktop/jdesign/__init__.py has no release yet, a green build on main publishes it
+# as a GitHub Release (pushing a tag like v1.0.0 does the same).
+name: Desktop app
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths: ["desktop/**", ".github/workflows/desktop.yml"]
+  pull_request:
+    paths: ["desktop/**", ".github/workflows/desktop.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: desktop
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.v.outputs.tag }}
+      publish: ${{ steps.v.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V=$(python3 -c "import re;print(re.search(r'APP_VERSION = \"([^\"]+)\"', open('jdesign/__init__.py').read()).group(1))")
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"; echo "publish=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_REF" == refs/heads/main && "$GITHUB_EVENT_NAME" != pull_request ]] && ! gh release view "v$V" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "New version v$V: will be released if every build passes"
+            echo "tag=v$V" >> "$GITHUB_OUTPUT"; echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "v$V is already released (or this isn't main): build and test only"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller pillow
+      - name: Build .exe
+        run: python packaging/build.py
+      - name: Test the Windows installer, update and uninstall
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $env:JACE_DESIGN_HOME = "$env:RUNNER_TEMP\jd-home"
+          $setup = (Get-ChildItem dist\*.exe)[0].FullName
+          function Run($exe, $argList) {
+            $p = Start-Process -FilePath $exe -ArgumentList $argList -Wait -PassThru
+            if ($p.ExitCode -ne 0) { throw "$exe $argList exited with $($p.ExitCode)" }
+          }
+          # 1. install from the downloaded .exe
+          Run $setup "--install --yes"
+          $dir = "$env:LOCALAPPDATA\Programs\Jace Design"
+          $exe = "$dir\JaceDesign.exe"
+          if (!(Test-Path $exe)) { throw "not installed" }
+          if (!(Test-Path "$dir\_internal")) { throw "_internal missing" }
+          $sm = [Environment]::GetFolderPath("Programs") + "\Jace Design.lnk"
+          $dt = [Environment]::GetFolderPath("Desktop") + "\Jace Design.lnk"
+          if (!(Test-Path $sm)) { throw "Start menu shortcut missing" }
+          if (!(Test-Path $dt)) { throw "desktop shortcut missing" }
+          $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\JaceDesign"
+          if (!(Test-Path $key)) { throw "Installed apps entry missing" }
+          Get-ItemProperty $key | Select-Object DisplayName, DisplayVersion, UninstallString | Format-List
+          # 2. the installed copy really starts (Qt + web view)
+          $env:JACE_SELF_TEST_OUT = "$env:RUNNER_TEMP\selftest.txt"
+          Run $exe "--self-test"
+          Get-Content $env:JACE_SELF_TEST_OUT
+          # 3. update: the new setup .exe installs over the existing copy
+          Run $setup "--apply-update `"$dir`" --no-gui --no-relaunch"
+          Run $exe "--self-test"
+          # 4. uninstall removes everything
+          Run $exe "--uninstall"
+          Start-Sleep -Seconds 8
+          if (Test-Path $dir) { throw "install folder left behind" }
+          if (Test-Path $sm) { throw "Start menu shortcut left behind" }
+          if (Test-Path $key) { throw "Installed apps entry left behind" }
+          "WINDOWS INSTALLER OK"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: desktop/dist/*.exe
+
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest       # Apple Silicon (arm64)
+            arch: arm64
+          - runner: macos-15-intel     # Intel (x86_64)
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller pillow
+      - name: Build .app
+        run: python packaging/build.py
+      - name: Smoke test (start the packaged app headless)
+        env:
+          QT_QPA_PLATFORM: offscreen
+          JACE_DESIGN_HOME: ${{ runner.temp }}/jd-home
+        run: '"build/darwin/dist/Jace Design.app/Contents/MacOS/Jace Design" --self-test'
+      - name: Test the Mac installer (install from a downloaded .app, then uninstall)
+        env:
+          JACE_DESIGN_HOME: ${{ runner.temp }}/jd-home-install
+        run: |
+          set -x
+          DL="$RUNNER_TEMP/Downloads"
+          mkdir -p "$DL"
+          ditto -x -k dist/*.app.zip "$DL"
+          xattr -w com.apple.quarantine "0081;$(printf %x $(date +%s));Safari;" "$DL/Jace Design.app"
+          "$DL/Jace Design.app/Contents/MacOS/Jace Design" --install --yes
+          APP="/Applications/Jace Design.app"
+          test -d "$APP"
+          test -L "$HOME/Desktop/Jace Design"
+          if xattr -r "$APP" | grep -q com.apple.quarantine; then echo "::error::app still quarantined"; exit 1; fi
+          QT_QPA_PLATFORM=offscreen "$APP/Contents/MacOS/Jace Design" --self-test
+          "$APP/Contents/MacOS/Jace Design" --uninstall
+          for i in $(seq 1 30); do [ -e "$APP" ] || break; sleep 1; done
+          test ! -e "$APP"
+          test ! -e "$HOME/Desktop/Jace Design"
+          echo "MAC INSTALLER OK"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: desktop/dist/*.app.zip
+
+  linux:
+    # older Ubuntu = older glibc = the AppImage runs on more distros
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb-cursor0 libegl1 libxkbcommon-x11-0 libnss3 libasound2 desktop-file-utils
+      - name: Create virtualenv
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install -r requirements.txt
+      - name: Build AppImage
+        run: ./packaging/build_appimage.sh
+      - name: Smoke test (start the packaged app headless)
+        env:
+          QT_QPA_PLATFORM: offscreen
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          JACE_DESIGN_HOME: ${{ runner.temp }}/jd-home
+        run: ./dist/JaceDesign-*-x86_64.AppImage --self-test
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: desktop/dist/*.AppImage
+
+  release:
+    if: needs.version.outputs.publish == 'true'
+    needs: [version, windows, macos, linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - uses: actions/checkout@v4
+        with:
+          path: src
+      - name: Release notes from desktop/CHANGELOG.md
+        run: |
+          V="${{ needs.version.outputs.tag }}"; V="${V#v}"
+          awk -v v="$V" '$0 == "## "v {f=1; next} /^## / {f=0} f' src/desktop/CHANGELOG.md > notes.md
+          cat notes.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Jace Design desktop ${{ needs.version.outputs.tag }}
+          body_path: notes.md
+          files: artifacts/*

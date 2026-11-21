@@ -1,0 +1,437 @@
+"""Self-installers for the Linux AppImage and the macOS .app (see macinstall.py).
+
+Linux: copies the AppImage to a folder of your choice and adds an applications-menu
+entry, a desktop shortcut, a terminal command and AppStream metadata (what GNOME
+Software / KDE Discover read to describe apps).
+
+From a terminal:
+    ./JaceDesign-x86_64.AppImage --install      # opens the setup wizard
+    ./JaceDesign-x86_64.AppImage --install --yes  # install with defaults, no questions
+    ./JaceDesign-x86_64.AppImage --uninstall [--purge]
+"""
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+from jdesign import APP_RELEASE_DATE, APP_VERSION, AUTHOR, GITHUB_URL, macinstall, wininstall
+from jdesign.config import DATA_DIR, read_json, write_json
+
+APP_ID = "io.github.okjace.JaceDesign"
+ICON_SRC = Path(__file__).parent / "assets" / "icon.png"
+APPIMAGE_NAME = "JaceDesign.AppImage"
+
+HOME = Path.home()
+DEFAULT_DIR = HOME / "Applications"
+DATA_HOME = Path(os.environ.get("XDG_DATA_HOME") or HOME / ".local" / "share")
+MENU_FILE = DATA_HOME / "applications" / f"{APP_ID}.desktop"
+ICON_FILE = DATA_HOME / "icons" / "hicolor" / "256x256" / "apps" / f"{APP_ID}.png"
+METAINFO_FILE = DATA_HOME / "metainfo" / f"{APP_ID}.metainfo.xml"
+BIN_LINK = HOME / ".local" / "bin" / "jace-design"
+RECORD = DATA_DIR / "install.json"
+
+
+def desktop_dir() -> Path:
+    """The user's Desktop folder (localised names like ~/Escritorio included)."""
+    try:
+        out = subprocess.run(["xdg-user-dir", "DESKTOP"], capture_output=True, text=True, timeout=5).stdout.strip()
+        if out and Path(out) != HOME:
+            return Path(out)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return HOME / "Desktop"
+
+
+def desktop_shortcut() -> Path:
+    return desktop_dir() / f"{APP_ID}.desktop"
+
+
+def running_appimage() -> Path | None:
+    p = os.environ.get("APPIMAGE")
+    return Path(p) if p and Path(p).is_file() else None
+
+
+def install_record() -> dict:
+    return read_json(RECORD, {})
+
+
+def installed_path() -> Path | None:
+    p = install_record().get("path")
+    return Path(p) if p and Path(p).exists() else None   # a file (AppImage) or a .app folder
+
+
+def is_installed() -> bool:
+    return installed_path() is not None
+
+
+def running_installed_copy() -> bool:
+    src, dst = running_package(), installed_path()
+    return bool(src and dst and src.resolve() == dst.resolve())
+
+
+def running_package() -> Path | None:
+    """The self-installable thing we're running from: an AppImage, a macOS .app or a Windows .exe."""
+    return running_appimage() or macinstall.running_bundle() or wininstall.running_exe()
+
+
+def setup_available() -> bool:
+    return running_package() is not None
+
+
+def default_install_dir() -> Path:
+    if wininstall.running_exe():
+        return wininstall.default_dir()
+    return macinstall.default_dir() if macinstall.running_bundle() else DEFAULT_DIR
+
+
+def install_options() -> list[tuple[str, str, bool]]:
+    """(key, label, checked by default) for the wizard's shortcut checkboxes."""
+    if wininstall.running_exe():
+        return wininstall.OPTIONS
+    if macinstall.running_bundle():
+        return macinstall.OPTIONS
+    return [("menu", "Add to the applications menu", True),
+            ("desktop", f"Create a desktop shortcut  ({desktop_dir()})", True),
+            ("terminal", "Add the  jace-design  terminal command", True),
+            ("appstream", "Show in GNOME Software, KDE Discover and other app centers", True)]
+
+
+PART_DESCRIPTIONS = {
+    "menu": "Added to your applications menu",
+    "applications": "Added to Launchpad and Spotlight",
+    "desktop": "Desktop shortcut created",
+    "dock": "Added to the Dock",
+    "terminal": "Run  jace-design  from a terminal",
+    "appstream": "App center info registered",
+    "unquarantine": "Removed the downloaded-from-internet flag",
+    "startmenu": "Added to the Start menu",
+    "apps": "Listed in Windows \"Installed apps\"",
+}
+
+
+def install_app(target_dir: Path, options: dict, status=print) -> Path:
+    """Install on whichever platform we're running; returns the installed path."""
+    if wininstall.running_exe() or macinstall.running_bundle():
+        mod = wininstall if wininstall.running_exe() else macinstall
+        path, parts = mod.install(target_dir, options, status)
+        write_json(RECORD, {"path": str(path), "version": APP_VERSION, "parts": parts})
+        return path
+    return install(target_dir, status=status, **{k: bool(options.get(k)) for k, _, _ in install_options()})
+
+
+# AppImageLauncher (a binfmt handler some distros ship) runs before every AppImage. It's a Qt5
+# app, and on Wayland desktops without qt5-wayland (niri, Sway, Hyprland...) it aborts, so Jace
+# Launcher never started. This variable tells it to step aside.
+NO_AIL = "APPIMAGELAUNCHER_DISABLE=1"
+
+
+def exec_line(exe: Path, *args: str) -> str:
+    """A desktop-entry Exec= value that starts our AppImage directly."""
+    return " ".join([f"env {NO_AIL}", f'"{exe}"', *args])
+
+
+def _bin_script(exe: Path) -> str:
+    return f'#!/bin/sh\n# Jace Design\nexec env {NO_AIL} "{exe}" "$@"\n'
+
+
+def refresh_integration():
+    """Bring the installed copy's menu entry, desktop shortcut and terminal command up to date."""
+    exe = installed_path()
+    if not exe or exe.suffix == ".app" or not exe.is_file():
+        return
+    parts = install_record().get("parts", [])
+    entry = _desktop_entry(exe)
+    changed = False
+    for want, path in (("menu", MENU_FILE), ("desktop", desktop_shortcut())):
+        if want in parts and path.is_file() and path.read_text(errors="replace") != entry:
+            _write(path, entry, executable=True)
+            changed = True
+    if "terminal" in parts and (BIN_LINK.is_symlink() or not BIN_LINK.is_file()
+                                or BIN_LINK.read_text(errors="replace") != _bin_script(exe)):
+        BIN_LINK.unlink(missing_ok=True)
+        _write(BIN_LINK, _bin_script(exe), executable=True)
+    if changed:
+        _refresh_menus()
+
+
+def _desktop_entry(exe: Path) -> str:
+    return ("[Desktop Entry]\n"
+            "Type=Application\n"
+            "Name=Jace Design\n"
+            "GenericName=Design App\n"
+            "Comment=Design posts, slides, posters, documents and videos\n"
+            f"Exec={exec_line(exe, '%U')}\n"
+            f"Icon={APP_ID}\n"
+            "Terminal=false\n"
+            "Categories=Graphics;Office;\n"
+            "Keywords=design;canva;poster;slides;presentation;document;graphics;jace;\n"
+            f"StartupWMClass={APP_ID}\n"
+            "Actions=uninstall;\n\n"
+            "[Desktop Action uninstall]\n"
+            "Name=Uninstall Jace Design\n"
+            f"Exec={exec_line(exe, '--uninstall-gui')}\n")
+
+
+def _metainfo() -> str:
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>{APP_ID}</id>
+  <name>Jace Design</name>
+  <summary>Design posts, slides, posters, documents and videos</summary>
+  <developer id="io.github.okjace"><name>{AUTHOR}</name></developer>
+  <url type="homepage">{GITHUB_URL}</url>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>Jace Design is a free, open-source design app with Sign in with Jace.</p>
+    <ul>
+      <li>Social posts, presentations, posters, cards, documents and videos</li>
+      <li>Templates, photo search, fonts and AI help</li>
+      <li>Share with Jace friends, comment, print and download</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">{APP_ID}.desktop</launchable>
+  <icon type="stock">{APP_ID}</icon>
+  <categories><category>Graphics</category><category>Office</category></categories>
+  <keywords><keyword>design</keyword><keyword>slides</keyword><keyword>poster</keyword></keywords>
+  <content_rating type="oars-1.1"/>
+  <releases><release version="{APP_VERSION}" date="{APP_RELEASE_DATE}"/></releases>
+</component>
+"""
+
+
+def _refresh_menus():
+    for cmd in (["update-desktop-database", str(MENU_FILE.parent)],
+                ["gtk-update-icon-cache", "-q", "-t", str(DATA_HOME / "icons" / "hicolor")]):
+        if shutil.which(cmd[0]):
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+
+
+def remove_duplicate_entries(appimage: Path | None = None) -> int:
+    """Remove menu entries other tools made for our AppImage (AppImageLauncher writes
+    appimagekit_<hash>-Jace_Launcher.desktop, which showed up as a second "Jace Design (1)"
+    next to ours). Returns how many were removed."""
+    paths = {str(p) for p in (appimage, installed_path(), running_appimage()) if p}
+    apps = DATA_HOME / "applications"
+    removed = 0
+    for f in apps.glob("appimagekit_*.desktop") if apps.is_dir() else []:
+        try:
+            text = f.read_text(errors="replace")
+        except OSError:
+            continue
+        exec_line = next((ln for ln in text.splitlines() if ln.startswith(("Exec=", "TryExec="))), "")
+        if not any(p in exec_line for p in paths) and APP_ID not in text:
+            continue
+        ident = next((ln.split("=", 1)[1].strip() for ln in text.splitlines()
+                      if ln.startswith("X-AppImage-Identifier=")), "")
+        f.unlink(missing_ok=True)
+        if ident:                               # its copy of our icon
+            for icon in (DATA_HOME / "icons").rglob(f"appimagekit_{ident}_*"):
+                icon.unlink(missing_ok=True)
+        removed += 1
+    if removed:
+        _refresh_menus()
+    return removed
+
+
+def _write(path: Path, text: str, executable=False):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    if executable:
+        os.chmod(path, 0o755)
+
+
+def install(target_dir: Path = DEFAULT_DIR, menu=True, desktop=True, terminal=True, appstream=True,
+            status=print) -> Path:
+    src = running_appimage()
+    if not src:
+        raise RuntimeError("Not running from an AppImage - build one with packaging/build_appimage.sh")
+    target_dir = Path(target_dir).expanduser()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    exe = target_dir / APPIMAGE_NAME
+
+    old = installed_path()
+    status(f"Copying Jace Design to {target_dir}")
+    if src.resolve() != exe.resolve():
+        tmp = exe.with_name(exe.name + ".tmp")
+        shutil.copy2(src, tmp)
+        os.chmod(tmp, 0o755)
+        os.replace(tmp, exe)
+    if old and old.resolve() != exe.resolve() and old.resolve() != src.resolve():
+        old.unlink(missing_ok=True)   # moved to a new location
+
+    ICON_FILE.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ICON_SRC, ICON_FILE)
+    entry = _desktop_entry(exe)
+    done = []
+
+    for p in (MENU_FILE, desktop_shortcut(), BIN_LINK, METAINFO_FILE):
+        if p.is_symlink() or p.exists():
+            p.unlink()
+
+    if menu:
+        status("Adding to the applications menu")
+        _write(MENU_FILE, entry, executable=True)
+        done.append("menu")
+    if desktop:
+        status("Creating desktop shortcut")
+        sc = desktop_shortcut()
+        _write(sc, entry, executable=True)
+        # GNOME (Desktop Icons NG) only launches desktop files marked as trusted
+        if shutil.which("gio"):
+            subprocess.run(["gio", "set", str(sc), "metadata::trusted", "true"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        done.append("desktop")
+    if terminal:
+        status("Adding the 'jace-design' command")
+        _write(BIN_LINK, _bin_script(exe), executable=True)
+        done.append("terminal")
+    if appstream:
+        status("Registering with software centers")
+        _write(METAINFO_FILE, _metainfo())
+        done.append("appstream")
+
+    remove_duplicate_entries(exe)
+    _refresh_menus()
+    write_json(RECORD, {"path": str(exe), "version": APP_VERSION, "parts": done})
+    status("Done")
+    return exe
+
+
+def uninstall(remove_data=False, delete_running=False):
+    """Remove the installed AppImage, menu entry and shortcuts.
+    delete_running also deletes the AppImage file we're running from (e.g. the download)."""
+    exe = installed_path()
+    running = running_appimage() if delete_running else None
+    for p in (MENU_FILE, desktop_shortcut(), ICON_FILE, BIN_LINK, METAINFO_FILE, exe, running):
+        if p and (p.is_symlink() or p.exists()):
+            p.unlink()
+    remove_duplicate_entries(exe)
+    RECORD.unlink(missing_ok=True)
+    if remove_data:
+        shutil.rmtree(DATA_DIR, ignore_errors=True)
+    _refresh_menus()
+
+
+# --- Windows / macOS builds -------------------------------------------------------
+
+def frozen() -> bool:
+    return bool(getattr(sys, "frozen", False))
+
+
+def windows_install_dir() -> Path | None:
+    """Folder of the installed Windows app (or of the copy we're running, if it's not
+    the downloaded setup .exe)."""
+    exe = installed_path()
+    if exe and exe.suffix.lower() == ".exe":
+        return exe.parent
+    run = wininstall.running_exe()
+    return run.parent if run and not wininstall.is_setup_build() else None
+
+
+def mac_app_bundle() -> Path | None:
+    return macinstall.running_bundle()
+
+
+def _mac_apps_to_delete() -> list[Path]:
+    """The installed .app plus the copy we're running from, if that's a separate
+    deletable copy (not a read-only disk image or Gatekeeper's translocated copy)."""
+    apps = []
+    for app in (installed_path(), mac_app_bundle()):
+        if (app and app.suffix == ".app" and app not in apps and not macinstall.translocated(app)
+                and not str(app).startswith("/Volumes/")):
+            apps.append(app)
+    return apps
+
+
+def removal_summary() -> list[str]:
+    """Human-readable list of what delete_app() will remove on this platform."""
+    if wininstall.running_exe():
+        items = []
+        d = windows_install_dir()
+        if d:
+            items.append(f"the app in {d}")
+        if wininstall.is_setup_build():
+            items.append(f"this downloaded file ({wininstall.running_exe()})")
+        return items + ["Start menu entry, desktop shortcut, terminal command and the Installed apps entry"]
+    if mac_app_bundle():
+        return [str(a) for a in _mac_apps_to_delete()] + ["Dock icon, desktop shortcut and Terminal command"]
+    items = []
+    installed, running = installed_path(), running_appimage()
+    if installed:
+        items.append(f"the app at {installed}")
+    if running and (not installed or running.resolve() != installed.resolve()):
+        items.append(f"this AppImage file ({running})")
+    items.append("menu entry, desktop shortcut and terminal command")
+    if not installed and not running and not frozen():
+        items.append("(running from source: the source folder itself is left alone)")
+    return items
+
+
+def delete_app(remove_data=False):
+    """Delete Jace Design on any platform. The caller should quit right after,
+    because on Windows/macOS the actual removal finishes once this process exits."""
+    if remove_data:
+        shutil.rmtree(DATA_DIR, ignore_errors=True)
+    if wininstall.running_exe():
+        wininstall.uninstall(windows_install_dir())
+        RECORD.unlink(missing_ok=True)
+        return
+    if mac_app_bundle():
+        apps = _mac_apps_to_delete()
+        macinstall.uninstall(apps[0] if apps else None)
+        for extra in apps[1:]:
+            macinstall.uninstall(extra)
+        RECORD.unlink(missing_ok=True)
+        return
+    uninstall(remove_data=False, delete_running=True)
+
+
+def apply_windows_update(argv, status):
+    """Run by the newly downloaded setup .exe: wait for the old app to quit, install
+    over it with the same options as before, then start the updated app."""
+    target = Path(argv[argv.index("--apply-update") + 1])
+    if "--wait-pid" in argv:
+        status("Waiting for Jace Design to close…")
+        wininstall.wait_for_pid(int(argv[argv.index("--wait-pid") + 1]))
+    parts = install_record().get("parts") or [k for k, _, d in wininstall.OPTIONS if d]
+    exe = install_app(target, {k: True for k in parts}, status)
+    if "--no-relaunch" not in argv:
+        wininstall.relaunch(exe)
+    return exe
+
+
+def handle_cli(argv) -> bool:
+    """Handle non-GUI flags. Returns True if the app should exit."""
+    if "--install" in argv and ("--yes" in argv or "-y" in argv):
+        exe = install_app(default_install_dir(), {k: d for k, _, d in install_options()})
+        print(f"Installed to {exe}")
+        return True
+    if "--update" in argv and ("--yes" in argv or "-y" in argv):
+        from jdesign import updater
+        updater.cli(argv)
+        return True
+    if "--apply-update" in argv and "--no-gui" in argv:
+        apply_windows_update(argv, print)
+        return True
+    if "--uninstall" in argv:
+        if mac_app_bundle() or wininstall.running_exe():
+            delete_app(remove_data="--purge" in argv)
+        else:
+            uninstall(remove_data="--purge" in argv)
+        print("Jace Design removed." + ("" if "--purge" in argv else
+              " Your sign-in and settings were kept (add --purge to delete them too)."))
+        return True
+    if "--help" in argv or "-h" in argv:
+        print("Jace Design\n"
+              "  --install            open the setup wizard (AppImage only)\n"
+              "  --install --yes      install with default options, no questions\n"
+              "  --uninstall          remove menu entry, shortcuts and the installed AppImage\n"
+              "  --uninstall --purge  also delete your sign-in and settings")
+        return True
+    return False
+
+
+if __name__ == "__main__":
+    sys.exit(0 if handle_cli(sys.argv[1:]) else 1)
