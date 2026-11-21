@@ -5,6 +5,7 @@ import ShareModal from './ShareModal';
 import AiHelper from './AiHelper';
 import SaveTemplate from './SaveTemplate';
 import ImageSearch from './ImageSearch';
+import { AccessLost, useAccessWatch } from './AccessWatch';
 import { DOC_SIZES, FONTS, normalizeDesign } from '@/lib/design';
 import { cleanHtml, markdownToHtml, textToHtml } from '@/lib/htmlClean';
 import { fileToDataUrl } from '@/lib/export';
@@ -40,6 +41,9 @@ export default function DocEditor({ id, initialDesign, initialTitle, initialVisi
   const again = useRef(false);
   const fileRef = useRef(null);
   const imgRef = useRef(null);
+  // If the owner removes you (or makes you view-only) while you're editing, stop saving and say so.
+  const lockedOut = useRef(false);
+  const { lost, setLost } = useAccessWatch(id, role, () => { lockedOut.current = true; clearTimeout(timer.current); });
 
   const margin = meta.page?.margin ?? 1;
   const fonts = [...new Set([...(meta.fonts || []).map((f) => f.family), ...(meta.googleFonts || []), ...FONTS, 'Arial', 'Georgia', 'Times New Roman', 'Courier New'])];
@@ -57,6 +61,7 @@ export default function DocEditor({ id, initialDesign, initialTitle, initialVisi
 
   // ---------- saving ----------
   const doSave = useCallback(async () => {
+    if (lockedOut.current) return;
     if (saving.current) { again.current = true; return; }
     saving.current = true; again.current = false;
     setSave('saving');
@@ -65,6 +70,12 @@ export default function DocEditor({ id, initialDesign, initialTitle, initialVisi
       const body = JSON.stringify({ design: { ...metaRef.current, html }, title: titleRef.current });
       if (body.length > 4_300_000) { setSave('toobig'); return; }
       const r = await fetch(`/api/designs/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body });
+      if (r.status === 404 || r.status === 403 || r.status === 401) {
+        lockedOut.current = true;
+        setLost((cur) => cur || { reason: 'removed', view: false });
+        setSave('error');
+        return;
+      }
       setSave(r.ok ? 'saved' : 'error');
     } catch {
       setSave('error');
@@ -81,7 +92,7 @@ export default function DocEditor({ id, initialDesign, initialTitle, initialVisi
   const first = useRef(true);
   useEffect(() => { if (first.current) { first.current = false; return; } changed(); }, [meta, title, changed]);
   useEffect(() => {
-    const warn = (e) => { if (save !== 'saved') { e.preventDefault(); e.returnValue = ''; } };
+    const warn = (e) => { if (save !== 'saved' && !lockedOut.current) { e.preventDefault(); e.returnValue = ''; } };
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
   }, [save]);
@@ -457,6 +468,7 @@ export default function DocEditor({ id, initialDesign, initialTitle, initialVisi
           </div>
         </div>
       ) : null}
+      <AccessLost id={id} lost={lost} />
       {ai ? (
         <AiHelper
           mode={ai}

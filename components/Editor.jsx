@@ -8,6 +8,7 @@ import AiHelper from './AiHelper';
 import ImageSearch from './ImageSearch';
 import ContextMenu from './ContextMenu';
 import SaveTemplate from './SaveTemplate';
+import { AccessLost, useAccessWatch } from './AccessWatch';
 import {
   EMOJI, FONTS, GRADIENTS, PRESET_GROUPS, SWATCHES, blankPage, emojiEl, imageEl, lineEl, normalizeDesign,
   scalePage, shapeEl, textEl, textFont, textHeight, uid, wrapText,
@@ -131,6 +132,9 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
   const [fontMsg, setFontMsg] = useState('');
   const [gFont, setGFont] = useState('');
   const fontFileRef = useRef(null);
+  // If the owner removes you (or makes you view-only) while you're editing, stop saving and say so.
+  const lockedOut = useRef(false);
+  const { lost, setLost } = useAccessWatch(id, role, () => { lockedOut.current = true; clearTimeout(saveTimer.current); });
   const scrollRef = useRef(null);
   const wrapRef = useRef(null);
   const clipRef = useRef(null);
@@ -424,6 +428,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
 
   // ---------- saving ----------
   const doSave = useCallback(async () => {
+    if (lockedOut.current) return;
     if (saving.current) { dirty.current = true; return; }
     saving.current = true;
     dirty.current = false;
@@ -432,6 +437,12 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
       const body = JSON.stringify({ design: designRef.current, title: titleRef.current });
       if (body.length > 4_300_000) { setSave('toobig'); return; }
       const r = await fetch(`/api/designs/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body });
+      if (r.status === 404 || r.status === 403 || r.status === 401) {
+        lockedOut.current = true;
+        setLost((cur) => cur || { reason: 'removed', view: false });
+        setSave('error');
+        return;
+      }
       setSave(r.ok ? 'saved' : 'error');
       if (r.ok) { clearTimeout(thumbTimer.current); thumbTimer.current = setTimeout(makeThumb, 2500); }
     } catch {
@@ -451,7 +462,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
   }, [design, title, doSave]);
 
   useEffect(() => {
-    const warn = (e) => { if (save !== 'saved') { e.preventDefault(); e.returnValue = ''; } };
+    const warn = (e) => { if (save !== 'saved' && !lockedOut.current) { e.preventDefault(); e.returnValue = ''; } };
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
   }, [save]);
@@ -1113,6 +1124,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
           onPrint={print} onDownload={() => setModal('download')} />
       ) : null}
       {modal === 'present' ? <Presenter design={design} start={pi} onClose={() => setModal(null)} /> : null}
+      <AccessLost id={id} lost={lost} />
     </div>
   );
 }
