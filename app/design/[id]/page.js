@@ -2,6 +2,7 @@ import { notFound, redirect } from 'next/navigation';
 import { getUser } from '@/lib/auth';
 import { canEdit, loadDesign } from '@/lib/access';
 import Editor from '@/components/Editor';
+import DocEditor from '@/components/DocEditor';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,7 +18,8 @@ export default async function EditPage({ params }) {
   const user = await getUser();
   if (!user) redirect(`/api/auth/login?next=/design/${id}`);
   const { design, role } = await loadDesign(id, user);
-  if (!design || !role) notFound();
+  if (!design) notFound();
   if (!canEdit(role)) redirect(`/d/${id}`);
-  return <Editor id={id} initialDesign={design.data} initialTitle={design.title} initialVisibility={design.visibility} role={role} />;
+  const props = { id, initialDesign: design.data, initialTitle: design.title, initialVisibility: design.visibility, role };
+  return design.data?.kind === 'doc' ? <DocEditor {...props} /> : <Editor {...props} />;
 }

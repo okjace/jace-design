@@ -13,7 +13,7 @@ export default async function Explore({ searchParams }) {
   const sort = ['popular', 'following'].includes(sp?.sort) ? sp.sort : 'new';
   const me = await getUser();
   const params = [term];
-  let where = `d.visibility = 'public' AND ($1 = '' OR d.title ILIKE '%' || $1 || '%' OR u.username ILIKE '%' || $1 || '%')`;
+  let where = `d.visibility = 'public' AND NOT d.is_template AND ($1 = '' OR d.title ILIKE '%' || $1 || '%' OR u.username ILIKE '%' || $1 || '%')`;
   if (sort === 'following' && me) {
     params.push(me.id);
     where += ` AND d.owner_id IN (SELECT following_id FROM follows WHERE follower_id = $2)`;

@@ -1,12 +1,26 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { PRESET_GROUPS, blankPage, imageEl, shapeEl, textEl, uid, normalizeDesign } from '@/lib/design';
+import { DOC_SIZES, PRESET_GROUPS, blankDoc, blankPage, imageEl, shapeEl, textEl, uid, normalizeDesign } from '@/lib/design';
 import { TEMPLATES, templateDesign } from '@/lib/templates';
 import { fileToDataUrl } from '@/lib/export';
+import { cleanHtml, markdownToHtml, textToHtml } from '@/lib/htmlClean';
+import { aiToDesign, aiToDocHtml, extractJson, fillAiImages } from '@/lib/ai';
 import DesignPage from './DesignPage';
+import AiHelper from './AiHelper';
+import { Thumb } from './DesignCard';
 import { useCreate } from './useCreate';
 
-const TABS = ['All', 'Sizes', 'Templates', 'Import', 'Custom size'];
+const TABS = ['All', 'AI', 'Docs', 'Sizes', 'Templates', 'Import', 'Custom size'];
+
+const DOC_TEMPLATES = [
+  { name: 'Blank document', icon: '📄', html: '<h1>Untitled document</h1><p>Start typing…</p>' },
+  { name: 'Letter', icon: '✉️', html: '<p>Your Name<br>Street address<br>City, ZIP</p><p>November 20, 2026</p><p>Dear [Name],</p><p>Write your letter here.</p><p>Sincerely,<br>Your Name</p>' },
+  { name: 'Resume', icon: '🧑‍💼', html: '<h1>Your Name</h1><p>you@example.com · (555) 010-0100 · City</p><h2>Experience</h2><h3>Job title — Company (2023–now)</h3><ul><li>What you achieved, with numbers</li><li>Another win</li></ul><h2>Education</h2><p>Degree — School (Year)</p><h2>Skills</h2><p>Skill one · Skill two · Skill three</p>' },
+  { name: 'Report', icon: '📊', html: '<h1>Report title</h1><p><em>Prepared by Your Name · Date</em></p><h2>Summary</h2><p>The key points in two or three sentences.</p><h2>Findings</h2><table><thead><tr><th>Item</th><th>Result</th><th>Notes</th></tr></thead><tbody><tr><td><br></td><td><br></td><td><br></td></tr><tr><td><br></td><td><br></td><td><br></td></tr></tbody></table><h2>Next steps</h2><ol><li>First step</li><li>Second step</li></ol>' },
+  { name: 'Essay', icon: '📝', html: '<h1 style="text-align: center">Essay title</h1><p style="text-align: center">Your Name · Class · Date</p><p style="line-height: 2">Introduction paragraph…</p><p style="line-height: 2">Body paragraph…</p><p style="line-height: 2">Conclusion…</p>' },
+  { name: 'Meeting notes', icon: '🗒️', html: '<h1>Meeting notes</h1><p><strong>Date:</strong> <br><strong>People:</strong> </p><h2>Agenda</h2><ul><li><br></li></ul><h2>Notes</h2><p><br></p><h2>Action items</h2><ul class="checklist"><li>Task — owner</li></ul>' },
+  { name: 'To-do list', icon: '✅', html: '<h1>To do</h1><ul class="checklist"><li>First thing</li><li>Second thing</li><li>Third thing</li></ul>' },
+];
 const UNITS = { px: 1, in: 96, cm: 37.795, mm: 3.7795 };
 
 function PresetShape({ w, h, icon }) {
@@ -82,11 +96,23 @@ export default function CreateHub() {
         const design = normalizeDesign(parsed.design || parsed);
         return createFrom(parsed.title || json.name.replace(/(\.jdesign)?\.json$/i, ''), design);
       }
-      const text = list.find((f) => /\.(md|txt)$/i.test(f.name));
-      if (text) return createFrom(text.name.replace(/\.\w+$/, ''), outlineToDesign(await text.text()));
+      const docx = list.find((f) => /\.docx$/i.test(f.name));
+      if (docx) {
+        const mammoth = await import('mammoth/mammoth.browser');
+        const res = await mammoth.convertToHtml({ arrayBuffer: await docx.arrayBuffer() });
+        return createFrom(docx.name.replace(/\.docx$/i, ''), blankDoc('letter', cleanHtml(res.value)));
+      }
+      const page = list.find((f) => /\.html?$/i.test(f.name));
+      if (page) return createFrom(page.name.replace(/\.\w+$/, ''), blankDoc('letter', cleanHtml(await page.text())));
+      const text = list.find((f) => /\.(md|markdown|txt)$/i.test(f.name));
+      if (text) {
+        const body = await text.text();
+        const html = /\.txt$/i.test(text.name) ? textToHtml(body) : markdownToHtml(body);
+        return createFrom(text.name.replace(/\.\w+$/, ''), blankDoc('letter', cleanHtml(html)));
+      }
       const images = list.filter((f) => f.type.startsWith('image/'));
       if (images.length) return createFrom(images[0].name.replace(/\.\w+$/, ''), await imagesToDesign(images));
-      setMsg('That file type is not supported yet. Try an image, SVG, .jdesign.json, .md or .txt file.');
+      setMsg('That file type is not supported yet. Try an image, SVG, Word (.docx), .jdesign.json, .html, .md or .txt file.');
     } catch (e) {
       setMsg(`Could not import that file: ${e.message}`);
     }
@@ -112,6 +138,41 @@ export default function CreateHub() {
     location.href = `/design/${id}`;
   }
 
+  // ---- AI ----
+  const [ai, setAi] = useState(null); // 'design' | 'doc'
+  const [aiSize, setAiSize] = useState('1080x1080');
+  const [aiPages, setAiPages] = useState(1);
+  const [aiDocSize, setAiDocSize] = useState('letter');
+  const [aw, ah] = aiSize.split('x').map(Number);
+  async function applyAi(reply, idea, progress) {
+    if (ai === 'doc') {
+      const html = aiToDocHtml(reply);
+      if (!html.trim()) throw new Error('The reply was empty.');
+      const firstHeading = html.match(/<h1[^>]*>(.*?)<\/h1>/i)?.[1]?.replace(/<[^>]+>/g, '');
+      await createFrom(firstHeading || idea.slice(0, 60) || 'Document', blankDoc(aiDocSize, html));
+      return;
+    }
+    const { title, design } = aiToDesign(extractJson(reply), aw, ah);
+    design.pages = await fillAiImages(design.pages, progress);
+    progress?.('Creating your design…');
+    await createFrom(title || idea.slice(0, 60) || 'AI design', design);
+  }
+
+  // ---- your & community templates ----
+  const [tplScope, setTplScope] = useState('builtin');
+  const [userTpls, setUserTpls] = useState(null);
+  useEffect(() => {
+    if (tplScope === 'builtin') return;
+    setUserTpls(null);
+    fetch(`/api/templates?scope=${tplScope}`).then((r) => r.json()).then((d) => setUserTpls(d.templates || [])).catch(() => setUserTpls([]));
+  }, [tplScope]);
+  async function openUserTemplate(t) {
+    const r = await fetch(`/api/designs/${t.id}/remix`, { method: 'POST' });
+    if (r.status === 401) { location.href = '/api/auth/login?next=/new'; return; }
+    if (!r.ok) return setMsg("Couldn't use that template.");
+    location.href = `/design/${(await r.json()).id}`;
+  }
+
   const cats = ['All', ...new Set(TEMPLATES.map((t) => t.category))];
   // Template previews use random ids, so only render them in the browser.
   const [mounted, setMounted] = useState(false);
@@ -134,6 +195,46 @@ export default function CreateHub() {
         {TABS.map((t) => <button key={t} className={`tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>{t}</button>)}
       </div>
 
+      {show('AI') ? (
+        <section>
+          <h2>✨ Create with AI</h2>
+          <div className="import-grid">
+            <div className="import-card" onClick={() => setAi('design')}>
+              <div className="ico">🎨</div>
+              <div><b>Design with AI</b><div className="muted small">Describe a poster, post, slides or card. Any AI designs it, with real photos filled in.</div></div>
+            </div>
+            <div className="import-card" onClick={() => setAi('doc')}>
+              <div className="ico">📝</div>
+              <div><b>Write a document with AI</b><div className="muted small">Letters, essays, reports, resumes — written for you, ready to edit.</div></div>
+            </div>
+          </div>
+          <p className="small muted">Works with ChatGPT, Claude, Gemini, Copilot or any AI you like. No account needed here and it&apos;s free.</p>
+        </section>
+      ) : null}
+
+      {show('Docs') ? (
+        <section>
+          <h2>📄 Documents</h2>
+          <p className="muted small" style={{ marginTop: -6 }}>Word-style documents you type in: headings, lists, tables, images, page breaks, then print or download as Word or PDF.</p>
+          <div className="preset-grid">
+            {DOC_TEMPLATES.map((t) => (
+              <button key={t.name} className="preset" disabled={busy} onClick={() => createFrom(t.name === 'Blank document' ? 'Untitled document' : t.name, blankDoc('letter', t.html))}>
+                <div style={{ height: 64, display: 'flex', alignItems: 'center' }}><div className="shape" style={{ width: 46, height: 60 }}>{t.icon}</div></div>
+                <b>{t.name}</b>
+                <small>Letter · editable</small>
+              </button>
+            ))}
+            {Object.entries(DOC_SIZES).filter(([k]) => k !== 'letter').map(([k, s]) => (
+              <button key={k} className="preset" disabled={busy} onClick={() => createFrom('Untitled document', blankDoc(k))}>
+                <div style={{ height: 64, display: 'flex', alignItems: 'center' }}><PresetShape w={s.w} h={s.h} icon="📄" /></div>
+                <b>Blank {k.toUpperCase()}</b>
+                <small>{s.name}</small>
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       {show('Import') ? (
         <section>
           <h2>📥 Import</h2>
@@ -144,7 +245,7 @@ export default function CreateHub() {
             </div>
             <div className="import-card" onClick={() => fileJson.current?.click()}>
               <div className="ico">🗂️</div>
-              <div><b>Jace Design file</b><div className="muted small">Open a .jdesign.json you downloaded — or a .md / .txt outline.</div></div>
+              <div><b>Documents & files</b><div className="muted small">Word (.docx), web pages (.html), Markdown, text — or a .jdesign.json you downloaded.</div></div>
             </div>
             <div className="import-card" style={{ cursor: 'default' }}>
               <div className="ico">🔗</div>
@@ -160,7 +261,7 @@ export default function CreateHub() {
             </div>
           </div>
           <input ref={fileImg} type="file" accept="image/*" multiple hidden onChange={(e) => importFiles(e.target.files)} />
-          <input ref={fileJson} type="file" accept=".json,.md,.txt,application/json,text/plain,text/markdown" hidden onChange={(e) => importFiles(e.target.files)} />
+          <input ref={fileJson} type="file" accept=".json,.docx,.html,.htm,.md,.markdown,.txt" hidden onChange={(e) => importFiles(e.target.files)} />
           <div className="card" style={{ marginTop: 14 }}>
             <div className="row" style={{ alignItems: 'flex-start', gap: 16 }}>
               <div style={{ fontSize: 28 }}>📝</div>
@@ -198,10 +299,34 @@ export default function CreateHub() {
         <section>
           <h2>🧩 Templates</h2>
           <div className="tabs" style={{ marginTop: 0 }}>
+            {[['builtin', 'Jace Design'], ['mine', 'Your templates'], ['community', 'Community']].map(([k, l]) => (
+              <button key={k} className={`tab ${tplScope === k ? 'active' : ''}`} onClick={() => setTplScope(k)}>{l}</button>
+            ))}
+          </div>
+          {tplScope !== 'builtin' ? (
+            !userTpls ? <p className="muted">Loading…</p> : !userTpls.length ? (
+              <div className="card center muted">
+                {tplScope === 'mine' ? <>No templates yet. Open any design and press <b>📌 Template</b> to save it as one.</> : 'No community templates yet. Be the first: save a design as a template and choose “Community”.'}
+              </div>
+            ) : (
+              <div className="grid">
+                {userTpls.map((t) => (
+                  <button key={t.id} className="dcard" style={{ border: 0, background: 'none', padding: 0, cursor: 'pointer', textAlign: 'left' }} onClick={() => openUserTemplate(t)}>
+                    <Thumb data={t.data} uid={`u${t.id}`} />
+                    <span className="dcard-title">{t.title}</span>
+                    <span className="dcard-meta">{t.category || (t.data?.kind === 'doc' ? 'Document' : `${t.width} × ${t.height}`)}{tplScope === 'community' ? ` · @${t.username}` : ''}{t.uses ? ` · used ${t.uses}×` : ''}</span>
+                  </button>
+                ))}
+              </div>
+            )
+          ) : null}
+          {tplScope === 'builtin' ? (
+          <div className="tabs" style={{ marginTop: 0 }}>
             {cats.map((c) => <button key={c} className={`tab ${cat === c ? 'active' : ''}`} onClick={() => setCat(c)}>{c}</button>)}
           </div>
+          ) : null}
           <div className="grid">
-            {mounted && TEMPLATES.filter((t) => cat === 'All' || t.category === cat).map((t) => {
+            {mounted && tplScope === 'builtin' && TEMPLATES.filter((t) => cat === 'All' || t.category === cat).map((t) => {
               const d = previews[t.id];
               return (
                 <button key={t.id} className="dcard" style={{ border: 0, background: 'none', padding: 0, cursor: 'pointer', textAlign: 'left' }} disabled={busy} onClick={() => createFrom(t.name, templateDesign(t))}>
@@ -236,6 +361,32 @@ export default function CreateHub() {
             }}>Create</button>
           </div>
         </section>
+      ) : null}
+      {ai ? (
+        <AiHelper
+          mode={ai}
+          context={{ width: aw, height: ah, pages: aiPages }}
+          onApply={applyAi}
+          onClose={() => setAi(null)}
+          extra={ai === 'design' ? (
+            <div className="row wrap" style={{ gap: 8 }}>
+              <label className="field" style={{ flex: 1, minWidth: 200 }}>Size
+                <select className="input" value={aiSize} onChange={(e) => setAiSize(e.target.value)}>
+                  {PRESET_GROUPS.flatMap((g) => g.items).map((p) => <option key={p.name} value={`${p.w}x${p.h}`}>{p.name} ({p.w}×{p.h})</option>)}
+                </select>
+              </label>
+              <label className="field">Pages
+                <input className="input" type="number" min={1} max={20} value={aiPages} onChange={(e) => setAiPages(Math.min(20, Math.max(1, Number(e.target.value) || 1)))} style={{ width: 80 }} />
+              </label>
+            </div>
+          ) : (
+            <label className="field">Page size
+              <select className="input" value={aiDocSize} onChange={(e) => setAiDocSize(e.target.value)}>
+                {Object.entries(DOC_SIZES).map(([k, s]) => <option key={k} value={k}>{s.name}</option>)}
+              </select>
+            </label>
+          )}
+        />
       ) : null}
     </main>
   );

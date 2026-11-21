@@ -29,7 +29,7 @@ export default async function Profile({ params, searchParams }) {
   const stats = await one(
     `SELECT (SELECT COUNT(*)::int FROM follows WHERE following_id = $1) AS followers,
             (SELECT COUNT(*)::int FROM follows WHERE follower_id = $1) AS following,
-            (SELECT COUNT(*)::int FROM designs WHERE owner_id = $1 AND visibility = 'public') AS designs,
+            (SELECT COUNT(*)::int FROM designs WHERE owner_id = $1 AND visibility = 'public' AND NOT is_template) AS designs,
             (SELECT COUNT(*)::int FROM likes l JOIN designs d ON d.id = l.design_id WHERE d.owner_id = $1) AS likes`,
     [u.id]
   );
@@ -37,11 +37,11 @@ export default async function Profile({ params, searchParams }) {
   const designs = tab === 'designs'
     ? await q(
       `SELECT d.id, d.title, d.width, d.height, d.data, d.visibility, (SELECT COUNT(*)::int FROM likes l WHERE l.design_id = d.id) AS likes
-       FROM designs d WHERE d.owner_id = $1 AND d.visibility = 'public' ORDER BY d.created_at DESC LIMIT 120`, [u.id])
+       FROM designs d WHERE d.owner_id = $1 AND d.visibility = 'public' AND NOT d.is_template ORDER BY d.created_at DESC LIMIT 120`, [u.id])
     : await q(
       `SELECT d.id, d.title, d.width, d.height, d.data, o.username, o.name, o.picture, (SELECT COUNT(*)::int FROM likes x WHERE x.design_id = d.id) AS likes
        FROM likes l JOIN designs d ON d.id = l.design_id JOIN users o ON o.id = d.owner_id
-       WHERE l.user_id = $1 AND d.visibility = 'public' ORDER BY l.created_at DESC LIMIT 120`, [u.id]);
+       WHERE l.user_id = $1 AND d.visibility = 'public' AND NOT d.is_template ORDER BY l.created_at DESC LIMIT 120`, [u.id]);
 
   return (
     <main className="page">

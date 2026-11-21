@@ -26,7 +26,7 @@ export default async function Home({ searchParams }) {
     const trending = await q(
       `SELECT d.id, d.title, d.width, d.height, d.data, u.username, u.name, u.picture,
               (SELECT COUNT(*)::int FROM likes l WHERE l.design_id = d.id) AS likes
-       FROM designs d JOIN users u ON u.id = d.owner_id WHERE d.visibility = 'public'
+       FROM designs d JOIN users u ON u.id = d.owner_id WHERE d.visibility = 'public' AND NOT d.is_template
        ORDER BY likes DESC, d.created_at DESC LIMIT 8`
     ).catch(() => []);
     return (
@@ -73,18 +73,22 @@ export default async function Home({ searchParams }) {
   }
 
   const term = typeof sp?.q === 'string' ? sp.q.trim() : '';
-  const mine = await q(
-    `SELECT id, title, width, height, data, visibility, updated_at FROM designs
-     WHERE owner_id = $1 AND ($2 = '' OR title ILIKE '%' || $2 || '%') ORDER BY updated_at DESC LIMIT 120`,
+  const all = await q(
+    `SELECT id, title, width, height, data, visibility, is_template, updated_at FROM designs
+     WHERE owner_id = $1 AND ($2 = '' OR title ILIKE '%' || $2 || '%') ORDER BY updated_at DESC LIMIT 160`,
     [user.id, term]
   );
+  const mine = all.filter((d) => !d.is_template);
+  const templates = all.filter((d) => d.is_template);
   const shared = await q(
-    `SELECT d.id, d.title, d.width, d.height, d.data, s.role, u.username, u.name, u.picture
+    `SELECT d.id, d.title, d.width, d.height, d.data, s.role, s.perms, u.username, u.name, u.picture
      FROM shares s JOIN designs d ON d.id = s.design_id JOIN users u ON u.id = d.owner_id
      WHERE s.user_id = $1 ORDER BY s.created_at DESC LIMIT 60`,
     [user.id]
   );
-  const quick = [PRESET_GROUPS[0].items[0], PRESET_GROUPS[2].items[0], PRESET_GROUPS[1].items[0], PRESET_GROUPS[3].items[0], PRESET_GROUPS[2].items[2], PRESET_GROUPS[3].items[2]];
+  const allPresets = PRESET_GROUPS.flatMap((g) => g.items);
+  const quick = ['Instagram post', 'Presentation 16:9', 'YouTube thumbnail', 'Poster (18×24 in)', 'Document (A4)', 'Business card']
+    .map((n) => allPresets.find((p) => p.name === n)).filter(Boolean);
 
   return (
     <main className="page">
@@ -115,9 +119,15 @@ export default async function Home({ searchParams }) {
           <h2>Shared with you</h2>
           <div className="grid">
             {shared.map((d) => (
-              <DesignCard key={d.id} d={d} author={{ username: d.username, name: d.name, picture: d.picture }} href={d.role === 'edit' ? `/design/${d.id}` : `/d/${d.id}`} />
+              <DesignCard key={d.id} d={d} author={{ username: d.username, name: d.name, picture: d.picture }} href={(d.perms?.edit ?? d.role === 'edit') ? `/design/${d.id}` : `/d/${d.id}`} />
             ))}
           </div>
+        </>
+      ) : null}
+      {templates.length ? (
+        <>
+          <h2>Your templates</h2>
+          <div className="grid">{templates.map((d) => <DesignCard key={d.id} d={d} mine />)}</div>
         </>
       ) : null}
     </main>

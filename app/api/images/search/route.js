@@ -12,7 +12,7 @@ export const GET = handler(async (request) => {
   if (!term) return json({ results: [], page, hasMore: false });
   const api = new URL('https://api.openverse.org/v1/images/');
   api.searchParams.set('q', term);
-  api.searchParams.set('page_size', '30');
+  api.searchParams.set('page_size', '20'); // the most Openverse allows without an API key
   api.searchParams.set('page', String(page));
   api.searchParams.set('mature', 'false');
   if (kind) api.searchParams.set('category', kind);
