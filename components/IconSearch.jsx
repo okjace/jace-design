@@ -8,19 +8,54 @@ const SETS = {
 };
 const API = 'https://api.iconify.design';
 
-const svgUrl = (name, color) => {
-  const [prefix, icon] = name.split(':');
-  return `${API}/${prefix}/${icon}.svg?width=512&height=512${color ? `&color=${encodeURIComponent(color)}` : ''}`;
-};
+// Icon drawings, fetched in bulk (one request per icon set) and kept for this visit. Asking for each icon's
+// picture separately gets refused by the icon service when a whole page of results loads at once.
+const shapes = new Map(); // 'prefix:name' -> { body, left, top, width, height }
 
-/** Fetch an icon as a self-contained image (so it works offline, in downloads and in videos). */
+async function loadShapes(names) {
+  const want = names.filter((n) => !shapes.has(n));
+  const bySet = new Map();
+  for (const n of want) {
+    const [prefix, icon] = n.split(':');
+    if (!prefix || !icon) continue;
+    if (!bySet.has(prefix)) bySet.set(prefix, []);
+    bySet.get(prefix).push(icon);
+  }
+  await Promise.all([...bySet.entries()].flatMap(([prefix, icons]) => {
+    const chunks = [];
+    for (let i = 0; i < icons.length; i += 60) chunks.push(icons.slice(i, i + 60));
+    return chunks.map(async (chunk) => {
+      const r = await fetch(`${API}/${prefix}.json?icons=${chunk.join(',')}`);
+      if (!r.ok) return;
+      const d = await r.json();
+      for (const icon of chunk) {
+        let data = d.icons?.[icon];
+        const alias = d.aliases?.[icon];
+        if (!data && alias) data = d.icons?.[alias.parent];
+        if (!data?.body) continue;
+        shapes.set(`${prefix}:${icon}`, {
+          body: data.body, left: data.left ?? d.left ?? 0, top: data.top ?? d.top ?? 0,
+          width: data.width ?? alias?.width ?? d.width ?? 24, height: data.height ?? alias?.height ?? d.height ?? 24,
+        });
+      }
+    });
+  }));
+}
+
+function svgFor(name, color, size = 512) {
+  const sh = shapes.get(name);
+  if (!sh) return null;
+  const body = color ? sh.body.replace(/currentColor/g, color) : sh.body;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${Math.round((size * sh.height) / sh.width)}" viewBox="${sh.left} ${sh.top} ${sh.width} ${sh.height}">${body}</svg>`;
+}
+const toDataUrl = (svg) => `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
+
+/** An icon as a self-contained image (so it works offline, in downloads and in videos). */
 export async function iconDataUrl(name, color) {
-  const r = await fetch(svgUrl(name, color));
-  if (!r.ok) throw new Error('That icon is not available right now.');
-  const svg = await r.text();
-  if (!svg.trim().startsWith('<svg')) throw new Error('That icon is not available right now.');
-  const b64 = btoa(unescape(encodeURIComponent(svg)));
-  return `data:image/svg+xml;base64,${b64}`;
+  if (!shapes.has(name)) await loadShapes([name]);
+  const svg = svgFor(name, color);
+  if (!svg) throw new Error('That icon is not available right now.');
+  return toDataUrl(svg);
 }
 
 export default function IconSearch({ onPick, color = '#16181d' }) {
@@ -40,7 +75,9 @@ export default function IconSearch({ onPick, color = '#16181d' }) {
       const r = await fetch(`${API}/search?query=${encodeURIComponent(term)}&limit=96&prefixes=${set.prefixes}`);
       const d = await r.json();
       if (n !== seq.current) return;
-      setList(d.icons || []);
+      await loadShapes(d.icons || []);
+      if (n !== seq.current) return;
+      setList((d.icons || []).filter((x) => shapes.has(x)));
     } catch {
       if (n === seq.current) { setErr("Couldn't reach the icon library. Check your connection and try again."); setList([]); }
     }
@@ -77,7 +114,7 @@ export default function IconSearch({ onPick, color = '#16181d' }) {
           {list.map((name) => (
             <button key={name} className="tile icon-tile" title={name} disabled={!!busy} onClick={() => pick(name)}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={svgUrl(name, tab === 'icons' ? '#5d6470' : null)} alt={name.split(':')[1]} loading="lazy" style={{ opacity: busy === name ? 0.4 : 1 }} />
+              <img src={toDataUrl(svgFor(name, tab === 'icons' ? '#5d6470' : null, 64))} alt={name.split(':')[1]} style={{ opacity: busy === name ? 0.4 : 1 }} />
             </button>
           ))}
         </div>
