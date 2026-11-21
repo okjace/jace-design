@@ -1317,6 +1317,13 @@ function Props({ el, update, actions, onFont, k, fonts = FONTS, colors = [] }) {
             <button className={`btn ${el.flipY ? 'active' : ''}`} onClick={() => update({ flipY: !el.flipY })}>⇵ Flip</button>
             <button className={`btn ${el.fit === 'contain' ? 'active' : ''}`} onClick={() => update({ fit: el.fit === 'contain' ? 'cover' : 'contain' })}>Fit whole</button>
           </div>
+          <h4>Rounded corners</h4>
+          <Range label="Corners" min={0} max={Math.round(Math.min(el.w, el.h) / 2)} value={Math.round(el.radius || 0)} onChange={(v) => update({ radius: v })} />
+          <div className="toggle-row">
+            {[['Square', 0], ['Rounded', 0.08], ['More', 0.2], ['Circle', 0.5]].map(([n, f]) => (
+              <button key={n} className={`btn ${Math.round(el.radius || 0) === Math.round(Math.min(el.w, el.h) * f) ? 'active' : ''}`} onClick={() => update({ radius: Math.min(el.w, el.h) * f })}>{n}</button>
+            ))}
+          </div>
           {el.fit !== 'contain' ? (
             <>
               <div className="small muted" style={{ marginTop: 6 }}>Focus (which part stays in frame)</div>
@@ -1339,7 +1346,6 @@ function Props({ el, update, actions, onFont, k, fonts = FONTS, colors = [] }) {
           <Range label="Sepia" min={0} max={100} value={f.sepia ?? 0} onChange={(v) => update({ filters: { ...f, sepia: v } })} suffix="%" />
           <Range label="Hue" min={0} max={360} value={f.hue ?? 0} onChange={(v) => update({ filters: { ...f, hue: v } })} suffix="°" />
           <Range label="Blur" min={0} max={20} step={0.5} value={f.blur ?? 0} onChange={(v) => update({ filters: { ...f, blur: v } })} suffix="px" />
-          <Range label="Corners" min={0} max={Math.min(el.w, el.h) / 2} value={el.radius || 0} onChange={(v) => update({ radius: v })} />
           <ColorRow label="Border" value={el.stroke || '#000000'} onChange={(c) => update({ stroke: c })} colors={colors} />
           <Range label="Border width" min={0} max={40} value={el.strokeWidth || 0} onChange={(v) => update({ strokeWidth: v })} />
         </>

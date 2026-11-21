@@ -161,6 +161,15 @@ export default function ContextMenu({ x, y, el, page, colors, fontInfo = { desig
               <Item icon="⬛" label={el.fit === 'contain' ? 'Fill the frame' : 'Fit whole image'} onClick={() => act.update({ fit: el.fit === 'contain' ? 'cover' : 'contain' })} />
               <Item icon="◐" label="Black & white" onClick={() => act.update({ filters: { ...(el.filters || {}), grayscale: el.filters?.grayscale ? 0 : 100 } })} />
               <div className="ctx-sep" />
+              <div className="ctx-label">Rounded corners</div>
+              <Slider label="Corners" value={Math.round(el.radius || 0)} min={0} max={Math.round(Math.min(el.w, el.h) / 2)} onChange={(v) => act.update({ radius: v })} />
+              <div className="ctx-row">
+                {[['Square', 0], ['Rounded', 0.08], ['More', 0.2], ['Circle', 0.5]].map(([n, f]) => (
+                  <button key={n} className={`btn btn-sm ${Math.round(el.radius || 0) === Math.round(Math.min(el.w, el.h) * f) ? 'active' : ''}`}
+                    onClick={() => act.update({ radius: Math.min(el.w, el.h) * f })}>{n}</button>
+                ))}
+              </div>
+              <div className="ctx-sep" />
             </>
           ) : null}
           {el.type === 'shape' ? (
