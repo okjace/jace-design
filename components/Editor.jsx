@@ -15,7 +15,7 @@ import {
 import { TEMPLATES, templateDesign } from '@/lib/templates';
 import { ensureFonts, exportImage, exportJson, exportPdf, exportSvg, fileToDataUrl, renderPageToCanvas } from '@/lib/export';
 import { fontFileToDataUrl, loadFontFile, loadGoogleFont, registerFonts } from '@/lib/fonts';
-import { aiToPages, aiToPalette, extractJson, fillAiImages, stripFences } from '@/lib/ai';
+import { aiToPages, aiToPalette, extraFonts, extractJson, fillAiImages, stripFences } from '@/lib/ai';
 
 const BLENDS = ['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge', 'color-burn', 'hard-light', 'soft-light', 'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity'];
 const FOCUS = [['xMinYMin', '↖'], ['xMidYMin', '↑'], ['xMaxYMin', '↗'], ['xMinYMid', '←'], ['xMidYMid', '•'], ['xMaxYMid', '→'], ['xMinYMax', '↙'], ['xMidYMax', '↓'], ['xMaxYMax', '↘']];
@@ -277,6 +277,19 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
     if (sel?.type === 'text') { updateSel({ fontFamily: family }); loadFont({ ...sel, fontFamily: family }); }
   }
 
+  // Use any font for the selected text. Fonts that aren't built in are added to the design so they load everywhere.
+  async function pickFont(f) {
+    if (sel?.type !== 'text' || !f) return;
+    const d = designRef.current;
+    const known = FONTS.includes(f) || (d.fonts || []).some((x) => x.family === f) || (d.googleFonts || []).includes(f);
+    updateSel({ fontFamily: f });
+    if (!known) {
+      commit((x) => ({ ...x, googleFonts: [...new Set([...(x.googleFonts || []), f])] }), { history: false });
+      await loadGoogleFont(f);
+    }
+    loadFont({ ...sel, fontFamily: f });
+  }
+
   // ---------- photo search ----------
   async function pickPhoto(r, asBackground) {
     setBusy('Adding photo…');
@@ -317,9 +330,20 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
     }
     let pages = aiToPages(extractJson(reply), W, H);
     pages = await fillAiImages(pages, progress);
+    // Load any fonts the AI picked that aren't built in, and remember them in the design.
+    const newFonts = extraFonts(pages);
+    if (newFonts.length) {
+      progress?.('Loading fonts…');
+      await Promise.all(newFonts.map((f) => loadGoogleFont(f)));
+      commit((d) => ({ ...d, googleFonts: [...new Set([...(d.googleFonts || []), ...newFonts])] }), { history: false });
+    }
     pages = pages.map((p) => ({ ...p, elements: p.elements.map(fixEl) }));
     if (ai === 'page') {
       commit((d) => ({ ...d, pages: d.pages.map((p, i) => (i === pi ? { ...pages[0], id: p.id, notes: p.notes } : p)) }));
+    } else if (ai === 'redo') {
+      // Replace every page (undo brings the old design back).
+      commit((d) => ({ ...d, pages }));
+      setPageIdx(0);
     } else {
       commit((d) => { const all = [...d.pages]; all.splice(pi + 1, 0, ...pages); return { ...d, pages: all }; });
       setPageIdx(pi + 1);
@@ -761,18 +785,22 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
       {ai ? (
         <AiHelper
           mode={ai}
-          context={{ width: W, height: H, title, pages: 1, text: sel?.type === 'text' ? sel.text : '', design: page }}
+          context={{ width: W, height: H, title, pages: 1, text: sel?.type === 'text' ? sel.text : '', design: ai === 'redo' ? design : page }}
           onApply={applyAi}
           onClose={() => setAi(null)}
         />
       ) : null}
       {menu ? (
         <ContextMenu
-          x={menu.x} y={menu.y} el={sel} page={page} colors={colors} fonts={fontList} hasClip={!!clipRef.current}
+          x={menu.x} y={menu.y} el={sel} page={page} colors={colors} hasClip={!!clipRef.current}
+          fontInfo={{ designFonts: [...(design.fonts || []).map((f) => f.family), ...(design.googleFonts || [])], uploaded: (design.fonts || []).map((f) => f.family) }}
           onClose={() => setMenu(null)}
           act={{
             update: (patch, opts) => updateSel(patch, opts),
-            font: (f) => { if (sel?.type !== 'text') return; updateSel({ fontFamily: f }); loadFont({ ...sel, fontFamily: f }); },
+            font: pickFont,
+            weight: (w) => { if (sel?.type !== 'text') return; updateSel({ fontWeight: w }); loadFont({ ...sel, fontWeight: w }); },
+            uploadFont: addFontFile,
+            addGoogleFont,
             setBg, toBackground, bgToImage, deleteSel, duplicateSel, reorder, alignSel,
             copy: () => { if (sel) clipRef.current = sel; },
             paste: () => { if (clipRef.current) { const c = { ...clipRef.current, id: uid(), x: clipRef.current.x + 24 * k, y: clipRef.current.y + 24 * k }; clipRef.current = c; addEl(c, { center: false }); } },
@@ -814,6 +842,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
               <h4>AI tools</h4>
               <p className="small muted" style={{ marginTop: 0 }}>Works with any AI (ChatGPT, Claude, Gemini…). We write the prompt, you paste the answer back.</p>
               <div className="stack" style={{ gap: 8 }}>
+                <button className="text-preset" onClick={() => setAi('redo')}><b>🪄 Redo the whole design</b><div className="small muted">AI redesigns every page: fonts, colors, backgrounds, photos</div></button>
                 <button className="text-preset" onClick={() => setAi('pages')}><b>✨ Add pages with AI</b><div className="small muted">Describe new slides or pages</div></button>
                 <button className="text-preset" onClick={() => setAi('page')}><b>🪄 Redesign this page</b><div className="small muted">Make page {pi + 1} look better</div></button>
                 <button className="text-preset" disabled={sel?.type !== 'text'} onClick={() => setAi('text')}><b>✍️ Rewrite selected text</b><div className="small muted">{sel?.type === 'text' ? `“${sel.text.slice(0, 40)}”` : 'Select some text first'}</div></button>

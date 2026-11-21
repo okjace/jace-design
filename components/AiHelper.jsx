@@ -7,6 +7,7 @@ const TITLES = {
   template: '✨ Make a template with AI',
   pages: '✨ Add pages with AI',
   page: '✨ Redesign this page with AI',
+  redo: '🪄 Redo the whole design with AI',
   text: '✨ Rewrite with AI',
   palette: '🎨 Color palette with AI',
   doc: '✨ Write a document with AI',
@@ -18,6 +19,7 @@ const PLACEHOLDERS = {
   template: 'e.g. A clean weekly planner template with space for each day',
   pages: 'e.g. 3 slides explaining how our app works, step by step',
   page: 'e.g. Make it more minimal and use a dark background',
+  redo: 'e.g. Make it feel like a luxury brand: serif fonts, black and gold, photo backgrounds',
   text: 'e.g. Make it shorter and funnier',
   palette: 'e.g. Calm, earthy, for a coffee shop',
   doc: 'e.g. A one-page cover letter for a junior web developer job at a startup',
@@ -35,7 +37,7 @@ export default function AiHelper({ mode, context = {}, onApply, onClose, extra }
   const [copied, setCopied] = useState(false);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState('');
-  const needsIdea = !['page', 'text', 'doc-edit', 'palette'].includes(mode);
+  const needsIdea = !['page', 'redo', 'text', 'doc-edit', 'palette'].includes(mode);
   const prompt = buildPrompt(mode, { ...context, idea });
 
   async function openAi(ai) {

@@ -1,6 +1,6 @@
 import { notFound, redirect } from 'next/navigation';
 import { getUser } from '@/lib/auth';
-import { canEdit, loadDesign } from '@/lib/access';
+import { canEdit, loadDesign, recordVisit } from '@/lib/access';
 import Editor from '@/components/Editor';
 import DocEditor from '@/components/DocEditor';
 
@@ -20,6 +20,7 @@ export default async function EditPage({ params }) {
   const { design, role } = await loadDesign(id, user);
   if (!design) notFound();
   if (!canEdit(role)) redirect(`/d/${id}`);
+  await recordVisit(design, user, null);
   const props = { id, initialDesign: design.data, initialTitle: design.title, initialVisibility: design.visibility, role };
   return design.data?.kind === 'doc' ? <DocEditor {...props} /> : <Editor {...props} />;
 }

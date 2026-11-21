@@ -144,6 +144,10 @@ export default function CreateHub() {
   const [aiPages, setAiPages] = useState(1);
   const [aiDocSize, setAiDocSize] = useState('letter');
   const [aw, ah] = aiSize.split('x').map(Number);
+  useEffect(() => {
+    const p = new URLSearchParams(location.search).get('ai');
+    if (p === 'design' || p === 'doc') setAi(p);
+  }, []);
   async function applyAi(reply, idea, progress) {
     if (ai === 'doc') {
       const html = aiToDocHtml(reply);
@@ -191,6 +195,14 @@ export default function CreateHub() {
       {error || msg ? <div className="notice err">{error || msg}</div> : null}
       {busy ? <div className="notice ok">Creating your design…</div> : null}
       {drag ? <div className="dropzone">Drop to import ✨</div> : null}
+      <div className="ai-banner" onClick={() => setAi('design')}>
+        <div style={{ fontSize: 30 }}>✨</div>
+        <div className="grow">
+          <b>Make a whole design with AI</b>
+          <div className="small">Describe it in a sentence: fonts, colors, backgrounds, photos and every page get made for you. Works with any AI.</div>
+        </div>
+        <span className="btn btn-sm" style={{ background: '#fff', color: '#157a47' }}>Start →</span>
+      </div>
       <div className="tabs">
         {TABS.map((t) => <button key={t} className={`tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>{t}</button>)}
       </div>

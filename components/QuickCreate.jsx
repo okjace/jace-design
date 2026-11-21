@@ -6,6 +6,8 @@ export default function QuickCreate({ presets }) {
   const { create, busy } = useCreate();
   return (
     <div className="row wrap" style={{ marginTop: 20, gap: 10 }}>
+      <Link href="/new?ai=design" className="btn" style={{ background: '#fff', color: '#157a47', border: 0 }}>✨ Design with AI</Link>
+      <Link href="/new?ai=doc" className="btn" style={{ background: 'rgba(255,255,255,.16)', color: '#fff', border: 0 }}>📝 Write with AI</Link>
       {presets.map((p) => (
         <button key={p.name} className="btn" disabled={busy} style={{ background: 'rgba(255,255,255,.16)', color: '#fff', border: 0 }}
           onClick={() => create({ title: p.name, w: p.w, h: p.h, pages: p.pages })}>

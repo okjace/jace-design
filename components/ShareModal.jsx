@@ -62,6 +62,8 @@ export default function ShareModal({ id, title, role, visibility, onVisibility, 
   const [shares, setShares] = useState([]);
   const [requests, setRequests] = useState([]);
   const [guests, setGuests] = useState([]);
+  const [peopleKey, setPeopleKey] = useState(0);
+  const refreshPeople = () => setPeopleKey((k) => k + 1);
   const [username, setUsername] = useState('');
   const [perms, setPerms] = useState({ ...PRESETS.view });
   const [note, setNote] = useState('');
@@ -104,6 +106,7 @@ export default function ShareModal({ id, title, role, visibility, onVisibility, 
     const d = await r.json();
     if (!r.ok) return setMsg({ err: true, text: d.error });
     setShares(d.shares);
+    refreshPeople();
     setMsg({ text: `Shared with @${username.replace(/^@/, '')}. We emailed them a link through Jace.` });
     setUsername(''); setNote('');
   }
@@ -122,6 +125,7 @@ export default function ShareModal({ id, title, role, visibility, onVisibility, 
       setRequests(d.requests || []);
       setGuests(d.guests || []);
       fetch(`/api/designs/${id}/shares`).then((x) => x.json()).then((x) => setShares(x.shares || []));
+      refreshPeople();
     }
   }
   async function guestAction(g, action, p) {
@@ -195,20 +199,7 @@ export default function ShareModal({ id, title, role, visibility, onVisibility, 
                 <div><button className="btn" type="submit">Share & email them</button></div>
               </form>
               {msg ? <div className={`notice ${msg.err ? 'err' : 'ok'}`} style={{ marginTop: 10, marginBottom: 0 }}>{msg.text}</div> : null}
-              {shares.length || guests.length ? (
-                <div className="stack" style={{ marginTop: 14, gap: 10 }}>
-                  <b className="small">People with access ({shares.length + guests.length})</b>
-                  {shares.map((s) => <ShareRow key={s.user_id} s={s} onChange={changeShare} onRemove={removeShare} />)}
-                  {guests.map((g) => (
-                    <ShareRow
-                      key={`g${g.id}`}
-                      s={{ name: g.guest_name || 'Guest', perms: g.perms, guest: true }}
-                      onChange={(_s, p) => guestAction(g, 'update', p)}
-                      onRemove={() => guestAction(g, 'revoke')}
-                    />
-                  ))}
-                </div>
-              ) : <div className="small muted" style={{ marginTop: 8 }}>Nobody else has been added yet.</div>}
+              <PeopleList id={id} reloadKey={peopleKey} />
             </div>
           ) : null}
 
@@ -271,6 +262,93 @@ export default function ShareModal({ id, title, role, visibility, onVisibility, 
             </div>
           ) : null}
         </div>
+      </div>
+    </div>
+  );
+}
+
+const STATUS = {
+  added: ['Added', 'badge public'],
+  approved: ['Approved', 'badge public'],
+  link: ['Via link', 'badge link'],
+  blocked: ['Blocked', 'badge'],
+};
+
+function ago(t) {
+  if (!t) return '';
+  const s = (Date.now() - new Date(t).getTime()) / 1000;
+  if (s < 90) return 'just now';
+  if (s < 3600) return `${Math.round(s / 60)} min ago`;
+  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
+  return `${Math.round(s / 86400)} d ago`;
+}
+
+// Everyone who can open (or has opened) this design, with their own permissions.
+function PeopleList({ id, reloadKey }) {
+  const [data, setData] = useState(null);
+  const [filter, setFilter] = useState('');
+  useEffect(() => {
+    fetch(`/api/designs/${id}/people`).then((r) => r.json()).then(setData).catch(() => setData({ people: [] }));
+  }, [id, reloadKey]);
+  async function patch(body) {
+    const r = await fetch(`/api/designs/${id}/people`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (r.ok) setData(await r.json());
+  }
+  if (!data) return <div className="small muted" style={{ marginTop: 12 }}>Loading people…</div>;
+  const list = (data.people || []).filter((p) => !filter || `${p.name} ${p.username || ''}`.toLowerCase().includes(filter.toLowerCase()));
+  return (
+    <div className="stack" style={{ marginTop: 16, gap: 8 }}>
+      <div className="row">
+        <b className="small grow">People with access ({data.people?.length || 0})</b>
+        {data.people?.length > 5 ? <input className="input" style={{ width: 160, padding: '5px 8px', fontSize: 13 }} placeholder="Search people" value={filter} onChange={(e) => setFilter(e.target.value)} /> : null}
+      </div>
+      <div className="small muted">Includes everyone who opened it with the link, signed in or as a guest. Change what each person can do, or block them.</div>
+      {!list.length ? <div className="small muted">{data.people?.length ? 'No one matches.' : 'Nobody else has opened or been added to this yet.'}</div> : null}
+      <div className="stack" style={{ gap: 8, maxHeight: 340, overflow: 'auto' }}>
+        {list.map((p) => <PersonRow key={p.key} p={p} linkOpen={data.link_open} onPatch={patch} />)}
+      </div>
+    </div>
+  );
+}
+
+function PersonRow({ p, linkOpen, onPatch }) {
+  const [open, setOpen] = useState(false);
+  const eff = p.effective || {};
+  const can = PERM_LABELS.filter(([k]) => eff[k]).map(([, l]) => l.replace(' / remix', ''));
+  const [label, cls] = STATUS[p.status] || STATUS.link;
+  const role = { view: 'Can view', comment: 'Can comment', edit: 'Can edit', custom: 'Custom' }[presetOf(eff)];
+  return (
+    <div className="stack" style={{ gap: 6, padding: 8, border: '1px solid var(--line)', borderRadius: 10, opacity: p.status === 'blocked' ? 0.7 : 1 }}>
+      <div className="row">
+        <Avatar user={{ name: p.name, picture: p.picture }} size={30} />
+        <div className="grow" style={{ minWidth: 0 }}>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+            <b>{p.name}</b>
+            <span className="muted small">{p.kind === 'guest' ? 'guest' : `@${p.username}`}</span>
+            <span className={cls}>{label}</span>
+          </div>
+          <div className="small muted" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {p.status === 'blocked' ? 'No access' : can.join(' · ') || 'No access'}
+            {p.visits ? ` · opened ${p.visits}× · ${ago(p.last_seen)}` : ''}
+            {!p.custom && p.status !== 'blocked' ? (linkOpen ? ' · using link settings' : ' · link is off') : ''}
+          </div>
+        </div>
+        {p.status !== 'blocked' ? <button className={`btn btn-sm ${open ? 'active' : ''}`} onClick={() => setOpen(!open)} title="Change what this person can do">{role} ▾</button> : null}
+      </div>
+      {open ? (
+        <div style={{ paddingLeft: 38 }} className="stack">
+          <PermPicker value={eff} onChange={(np) => onPatch({ key: p.key, perms: np })} compact />
+        </div>
+      ) : null}
+      <div className="row wrap" style={{ gap: 6, paddingLeft: 38 }}>
+        {p.status === 'blocked'
+          ? <button className="btn btn-sm" onClick={() => onPatch({ key: p.key, action: 'reset' })}>Unblock</button>
+          : <button className="btn btn-sm btn-danger" onClick={() => onPatch({ key: p.key, action: 'block' })}>Block</button>}
+        {p.custom && p.status !== 'blocked' ? (
+          <button className="btn btn-sm" onClick={() => onPatch({ key: p.key, action: 'reset' })} title={linkOpen ? 'Use the same permissions as anyone with the link' : 'Remove their access'}>
+            {linkOpen ? 'Use link settings' : 'Remove access'}
+          </button>
+        ) : null}
       </div>
     </div>
   );

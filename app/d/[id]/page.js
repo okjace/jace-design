@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getUser } from '@/lib/auth';
-import { canEdit, getGuest, loadDesign } from '@/lib/access';
+import { canEdit, getGuest, loadDesign, recordVisit } from '@/lib/access';
 import { one, q } from '@/lib/db';
 import Avatar from '@/components/Avatar';
 import DesignViewer from '@/components/DesignViewer';
@@ -46,8 +46,9 @@ export default async function ViewPage({ params }) {
     );
   }
 
-  const [, likes, likedRow, comments, remixOf, remixes] = await Promise.all([
+  const [, , likes, likedRow, comments, remixOf, remixes] = await Promise.all([
     role !== 'owner' ? q('UPDATE designs SET views = views + 1 WHERE id = $1', [id]).catch(() => {}) : null,
+    recordVisit(design, user, guest),
     one('SELECT COUNT(*)::int AS n FROM likes WHERE design_id = $1', [id]),
     user ? one('SELECT 1 AS x FROM likes WHERE design_id = $1 AND user_id = $2', [id, user.id]) : null,
     q(`SELECT c.id, c.body, c.created_at, c.guest_name, u.username, u.name, u.picture FROM comments c LEFT JOIN users u ON u.id = c.user_id
