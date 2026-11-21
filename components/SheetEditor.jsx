@@ -5,6 +5,7 @@ import ShareModal from './ShareModal';
 import SaveTemplate from './SaveTemplate';
 import { AccessLost, useAccessWatch } from './AccessWatch';
 import { useSaver } from './useSaver';
+import VersionHistory from './VersionHistory';
 import { addr, blankSheet, colName, display, makeEvaluator, parseAddr, parseCSV, toCSV } from '@/lib/sheet';
 import { normalizeDesign } from '@/lib/design';
 import { downloadBlob, safeName } from '@/lib/export';
@@ -214,6 +215,7 @@ export default function SheetEditor({ id, initialDesign, initialTitle, initialVi
         <button className="btn btn-sm" onClick={redo} title="Redo (Ctrl+Y)">↷</button>
         <input className="ed-title" value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Spreadsheet title" />
         <span className={`ed-status save-${save}`} onClick={() => ['error', 'retrying', 'offline'].includes(save) && saver.retry()}>{saveLabel}</span>
+        <button className="btn btn-sm" onClick={() => setModal('history')} title="Version history">🕘</button>
         <div className="grow" />
         <button className="btn btn-sm" onClick={() => fileRef.current?.click()}>📥 Import CSV</button>
         <input ref={fileRef} type="file" hidden accept=".csv,.tsv,.txt,text/csv" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) importCSV(f); }} />
@@ -349,6 +351,7 @@ export default function SheetEditor({ id, initialDesign, initialTitle, initialVi
       {modal === 'template' ? <SaveTemplate id={id} title={title} onClose={() => setModal(null)} /> : null}
       <AccessLost id={id} lost={lost} />
       {saver.notices}
+      {modal === 'history' ? <VersionHistory id={id} beforeSave={() => doSave()} onClose={() => setModal(null)} /> : null}
     </div>
   );
 }

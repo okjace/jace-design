@@ -7,6 +7,7 @@ import SaveTemplate from './SaveTemplate';
 import ImageSearch from './ImageSearch';
 import { AccessLost, useAccessWatch } from './AccessWatch';
 import { useSaver } from './useSaver';
+import VersionHistory from './VersionHistory';
 import { DOC_SIZES, FONTS, normalizeDesign } from '@/lib/design';
 import { cleanHtml, markdownToHtml, textToHtml } from '@/lib/htmlClean';
 import { fileToDataUrl } from '@/lib/export';
@@ -303,6 +304,7 @@ export default function DocEditor({ id, initialDesign, initialTitle, initialVisi
         <Link href="/" className="btn btn-sm" title="Home">🏠</Link>
         <input className="ed-title" value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Document title" />
         <span className={`ed-status save-${save}`} onClick={() => ['error', 'retrying', 'offline'].includes(save) && saver.retry()}>{saveLabel}</span>
+        <button className="btn btn-sm" onClick={() => setModal('history')} title="Version history">🕘</button>
         <div className="grow" />
         <button className="btn btn-sm" onClick={() => openAi('doc')}>✨ Write with AI</button>
         <button className="btn btn-sm" onClick={() => fileRef.current?.click()} title="Import .docx, .html, .md or .txt">📥 Import</button>
@@ -453,6 +455,7 @@ export default function DocEditor({ id, initialDesign, initialTitle, initialVisi
       ) : null}
       <AccessLost id={id} lost={lost} />
       {saver.notices}
+      {modal === 'history' ? <VersionHistory id={id} beforeSave={() => doSave()} onClose={() => setModal(null)} /> : null}
       {ai ? (
         <AiHelper
           mode={ai}

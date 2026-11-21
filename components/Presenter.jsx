@@ -1,10 +1,60 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import DesignPage from './DesignPage';
+import { resolveBg } from '@/lib/blocks';
+
+const animated = (e) => e.anim?.type && e.anim.type !== 'none';
+const needsPlay = (page, withTransition) => (withTransition && page.transition && page.transition !== 'none') || page.elements.some(animated);
+
+/** Plays a slide's transition (from the slide before) and its animations on a canvas, then hands back to the sharp SVG. */
+function SlidePlayer({ design, from, to, onDone }) {
+  const ref = useRef(null);
+  const done = useRef(onDone);
+  done.current = onDone;
+  useEffect(() => {
+    let stop = false, raf = 0;
+    const c = ref.current;
+    const W = design.width, H = design.height;
+    const s = Math.min(window.innerWidth / W, window.innerHeight / H);
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    c.style.width = `${W * s}px`; c.style.height = `${H * s}px`;
+    c.width = Math.round(W * s * dpr); c.height = Math.round(H * s * dpr);
+    const ctx = c.getContext('2d');
+    ctx.scale(s * dpr, s * dpr);
+    const page = design.pages[to];
+    const prev = from != null ? design.pages[from] : null;
+    // Long scenes so the "previous" slide is fully shown and nothing ends early.
+    const pages = [];
+    if (prev) pages.push({ ...prev, background: resolveBg(design, prev), duration: 1000, transition: 'none' });
+    pages.push({ ...page, background: resolveBg(design, page), duration: 1000, transition: prev ? page.transition || 'none' : 'none' });
+    const temp = { ...design, pages };
+    const offset = prev ? 1000 : 0;
+    const end = Math.max(prev && page.transition && page.transition !== 'none' ? 0.6 : 0,
+      ...page.elements.filter(animated).map((e) => (Number(e.anim.delay) || 0) + (Number(e.anim.duration) || 0.7))) + 0.05;
+    (async () => {
+      const [{ drawFrame }, { ensureFonts, preloadImages }, { registerFonts }] = await Promise.all([import('@/lib/video'), import('@/lib/export'), import('@/lib/fonts')]);
+      await registerFonts(design); await ensureFonts(design); await preloadImages(temp);
+      if (stop) return;
+      const t0 = performance.now();
+      const tick = async () => {
+        if (stop) return;
+        const t = (performance.now() - t0) / 1000;
+        await drawFrame(ctx, temp, offset + Math.min(t, end));
+        if (t >= end) { done.current?.(); return; }
+        raf = requestAnimationFrame(tick);
+      };
+      tick();
+    })();
+    return () => { stop = true; cancelAnimationFrame(raf); };
+  }, [design, from, to]);
+  return <canvas ref={ref} style={{ display: 'block' }} />;
+}
 
 export default function Presenter({ design, start = 0, onClose }) {
   const [i, setI] = useState(start);
   const [ready, setReady] = useState(false); // false until they press OK on the "Esc exits" notice
+  const [playing, setPlaying] = useState(null); // { from, to } while a slide's transition/animations play
+  const shown = useRef(null);
   const ref = useRef(null);
   const okRef = useRef(null);
   const entered = useRef(false);
@@ -47,6 +97,20 @@ export default function Presenter({ design, start = 0, onClose }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Moving forward one slide plays its transition and animations; jumping or going back just shows it.
+  // (A layout effect, so the finished slide never flashes up before its animation starts.)
+  useLayoutEffect(() => {
+    if (!ready) return;
+    const prev = shown.current;
+    shown.current = i;
+    const page = design.pages[Math.min(i, n - 1)];
+    if (!page) return;
+    if (prev == null && needsPlay(page, false)) setPlaying({ from: null, to: i });
+    else if (prev != null && i === prev + 1 && needsPlay(page, true)) setPlaying({ from: prev, to: i });
+    else setPlaying(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [i, ready]);
+
   function begin() {
     setReady(true);
     // Called from a click/keypress, so the browser allows fullscreen. If it's refused, present in the window.
@@ -55,7 +119,9 @@ export default function Presenter({ design, start = 0, onClose }) {
 
   return (
     <div className="present" ref={ref} onClick={() => ready && setI((x) => (x + 1 < n ? x + 1 : x))}>
-      <DesignPage design={design} page={design.pages[Math.min(i, n - 1)]} width="100%" height="100%" uidPrefix="present-" />
+      {playing && ready
+        ? <SlidePlayer key={`${playing.from}-${playing.to}`} design={design} from={playing.from} to={playing.to} onDone={() => setPlaying(null)} />
+        : <DesignPage design={design} page={design.pages[Math.min(i, n - 1)]} width="100%" height="100%" uidPrefix="present-" />}
       {ready ? (
         <div className="present-hint">{i + 1} / {n} · ← → to move</div>
       ) : (

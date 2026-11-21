@@ -12,9 +12,15 @@ import { AccessLost, useAccessWatch } from './AccessWatch';
 import { useSaver } from './useSaver';
 import VideoPlayer from './VideoPlayer';
 import LinkPicker, { linkLabel, sectionAnchor } from './LinkPicker';
+import IconSearch, { iconDataUrl } from './IconSearch';
+import BrandKit, { useBrand } from './BrandKit';
+import VersionHistory from './VersionHistory';
+import Timeline from './Timeline';
+import { LiveLayer, useLive } from './LiveCursors';
+import { CHART_COLORS, CHART_TYPES, chartEl, chartToCsv, csvToChart, qrEl, resolveBg, tableEl } from '@/lib/blocks';
 import {
   EMOJI, FONTS, GRADIENTS, PRESET_GROUPS, SWATCHES, blankPage, emojiEl, imageEl, lineEl, normalizeDesign,
-  scalePage, shapeEl, textEl, textFont, textHeight, uid, wrapText, ANIMATIONS, videoLength,
+  scalePage, shapeEl, textEl, textFont, textHeight, uid, wrapText, ANIMATIONS, videoLength, TRANSITIONS, TRANSITION_NAMES,
 } from '@/lib/design';
 import { TEMPLATES, templateDesign } from '@/lib/templates';
 import { ensureFonts, exportImage, exportJson, exportPdf, exportSvg, fileToDataUrl, renderPageToCanvas } from '@/lib/export';
@@ -51,10 +57,12 @@ const RAIL = [
   ['templates', '🧩', 'Templates'],
   ['ai', '✨', 'AI'],
   ['elements', '🔷', 'Elements'],
+  ['icons', '⭐', 'Icons'],
   ['text', '🔤', 'Text'],
   ['photos', '🔍', 'Photos'],
   ['uploads', '☁️', 'Uploads'],
   ['background', '🎨', 'Background'],
+  ['brand', '💼', 'Brand'],
   ['layers', '📚', 'Layers'],
 ];
 
@@ -140,6 +148,13 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
   const isSite = design.kind === 'website';
   const [pen, setPen] = useState(null); // { color, width } while the pen is on
   const [stroke, setStroke] = useState(null); // the line being drawn right now
+  const [brand, saveBrand] = useBrand();
+  const [live, setLive] = useState(false); // live cursors (off unless you turn it on)
+  useEffect(() => { try { setLive(localStorage.getItem('jd_live') === '1'); } catch {} }, []);
+  const toggleLive = () => setLive((v) => { try { localStorage.setItem('jd_live', v ? '0' : '1'); } catch {} return !v; });
+  const posRef = useRef(null); // your cursor, in design units (for live cursors)
+  const selRef = useRef(null);
+  const remoteRef = useRef(false); // true while loading someone else's saved changes (don't save them back)
   const addSticky = (color) => addEl(textEl({ text: 'Write something…', fontFamily: 'Caveat', fontSize: 44 * k, w: 340 * k, color: '#16181d', bgColor: color, lineHeight: 1.25 }));
 
   function addAudio(file) {
@@ -169,6 +184,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
   const H = design.height;
   const page = design.pages[Math.min(pageIdx, design.pages.length - 1)];
   const sel = page.elements.find((e) => e.id === selId) || null;
+  selRef.current = selId;
   const k = Math.min(W, H) / 1080; // scale for default element sizes
 
   // ---------- state + history ----------
@@ -251,7 +267,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
     const p = { left: { x: 0 }, center: { x: (W - sel.w) / 2 }, right: { x: W - sel.w }, top: { y: 0 }, middle: { y: (H - sel.h) / 2 }, bottom: { y: H - sel.h } }[how];
     updateSel(p);
   };
-  const colors = useMemo(() => designColors(design), [design]);
+  const colors = useMemo(() => [...new Set([...(brand?.colors || []), ...designColors(design)])].slice(0, 21), [design, brand]);
   const fontList = useMemo(
     () => [...new Set([...(design.fonts || []).map((f) => f.family), ...(design.googleFonts || []), ...FONTS])],
     [design.fonts, design.googleFonts]
@@ -274,6 +290,55 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
     commit((d) => mapPage(d, (p) => ({ ...p, background: { type: 'color', color: '#ffffff' }, elements: [e, ...p.elements] })));
     setSelId(e.id);
   };
+
+  // ---------- default text settings ----------
+  const td = design.textDefaults || {};
+  const tdFont = (heading, fallback) => (heading ? td.headingFont || td.font : td.font) || fallback;
+  const withDefaults = (el, heading) => {
+    const f = heading ? td.headingFont || td.font : td.font;
+    return { ...el, ...(f ? { fontFamily: f } : {}), ...(td.color && el.type !== 'chart' ? { color: td.color } : {}) };
+  };
+  async function ensureFontKnown(f) {
+    const d = designRef.current;
+    if (!f || FONTS.includes(f) || (d.fonts || []).some((x) => x.family === f) || (d.googleFonts || []).includes(f)) return;
+    commit((x) => ({ ...x, googleFonts: [...new Set([...(x.googleFonts || []), f])] }), { history: false });
+    await loadGoogleFont(f);
+  }
+  const setTd = (patch) => {
+    commit((d) => ({ ...d, textDefaults: { ...(d.textDefaults || {}), ...patch } }));
+    if (patch.font) ensureFontKnown(patch.font);
+    if (patch.headingFont) ensureFontKnown(patch.headingFont);
+  };
+  function applyTd(scope) {
+    const isHeading = (e) => (e.fontWeight || 400) >= 600 || e.fontSize >= 72 * k;
+    commit((d) => ({
+      ...d,
+      pages: d.pages.map((p, i) => (scope === 'page' && i !== pi ? p : {
+        ...p,
+        elements: p.elements.map((e) => {
+          if (e.type === 'table' || e.type === 'chart') return { ...e, ...(td.font ? { fontFamily: td.font } : {}), ...(td.color ? { color: td.color } : {}) };
+          if (e.type !== 'text') return e;
+          const patch = {};
+          const f = isHeading(e) ? td.headingFont || td.font : td.font;
+          if (f) patch.fontFamily = f;
+          if (td.color && !e.bgColor) patch.color = td.color; // buttons and sticky notes keep their colors
+          return Object.keys(patch).length ? fixEl({ ...e, ...patch }) : e;
+        }),
+      })),
+    }));
+    [td.font, td.headingFont].filter(Boolean).forEach((f) => loadFont({ fontFamily: f, fontWeight: 400 }));
+  }
+
+  // Icons are drawings fetched in one color; changing the color fetches it again in the new one.
+  const iconSeq = useRef(0);
+  async function recolorIcon(el, c) {
+    if (!el?.icon || !/^#[0-9a-f]{6}$/i.test(c)) return;
+    const n = ++iconSeq.current;
+    try {
+      const src = await iconDataUrl(el.icon, c);
+      if (n === iconSeq.current) updateEl(el.id, { src, iconColor: c });
+    } catch {}
+  }
 
   // ---------- custom fonts ----------
   async function addFontFile(file) {
@@ -462,12 +527,28 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
   const first = useRef(true);
   useEffect(() => {
     if (first.current) { first.current = false; return; }
+    if (remoteRef.current) { remoteRef.current = false; return; }
     if (!lockedOut.current) saver.changed();
   }, [design, title]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function saveNow() {
     await saver.now();
   }
+
+  // ---------- live cursors + live updates ----------
+  const { people } = useLive({
+    id, on: live && !lost, page: pi, posRef, selRef, saver,
+    onRemote: (data, newTitle, v) => {
+      remoteRef.current = true;
+      const d = normalizeDesign(data);
+      const next = { ...d, pages: d.pages.map((p) => ({ ...p, elements: p.elements.map(fixEl) })) };
+      designRef.current = next;
+      setDesign(next);
+      if (typeof newTitle === 'string') setTitle(newTitle);
+      saver.setVersion(v);
+      registerFonts(next).catch(() => {});
+    },
+  });
 
   async function changeVisibility(v) {
     setVisibility(v);
@@ -503,7 +584,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
   // ---------- keyboard + clipboard ----------
   useEffect(() => {
     const onKey = (e) => {
-      if (modal === 'present') return;
+      if (modal === 'present' || modal === 'history') return;
       const mod = e.ctrlKey || e.metaKey;
       if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); saveNow(); return; }
       if (isTyping(e.target)) return;
@@ -806,6 +887,16 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
         <input className="ed-title" value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Design title" />
         <span className={`ed-status save-${save}`} title={save === 'error' || save === 'retrying' ? 'Click to try again now' : ''} onClick={() => (save === 'error' || save === 'retrying' || save === 'offline') && saver.retry()}>{busy || saveLabel}</span>
         <div className="grow" />
+        <button className={`btn btn-sm ${live ? 'active' : ''}`} onClick={toggleLive}
+          title={live ? 'Live is on: you see the cursors of others who have it on, and their changes appear as they save. Click to turn off.' : 'Turn on live cursors and live updates'}>
+          👥 Live{live ? ' on' : ''}
+        </button>
+        {live && people.length ? (
+          <div className="live-faces">
+            {people.slice(0, 5).map((p) => <span key={p.sess} title={`${p.name}${p.page !== pi ? ` (page ${p.page + 1})` : ''}`} style={{ background: p.color }}>{(p.name || '?').slice(0, 1).toUpperCase()}</span>)}
+          </div>
+        ) : null}
+        <button className="btn btn-sm" onClick={() => setModal('history')} title="Version history">🕘</button>
         {isSite ? <button className="btn btn-sm" onClick={async () => { await saveNow(); window.open(`/s/${id}`, '_blank'); }}>🌐 View site</button> : null}
         {isVideo
           ? <button className="btn btn-sm btn-white" onClick={() => setModal('play')}>▶ Play</button>
@@ -904,6 +995,31 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
 
           {panel === 'photos' ? <ImageSearch onPick={pickPhoto} /> : null}
 
+          {panel === 'icons' ? (
+            <IconSearch color={design.textDefaults?.color || '#16181d'} onPick={(ic) => addEl(imageEl({ src: ic.src, icon: ic.icon, iconColor: ic.iconColor, w: 260 * k, h: 260 * k, fit: 'contain' }))} />
+          ) : null}
+
+          {panel === 'brand' ? (
+            <BrandKit
+              brand={brand} save={saveBrand} fonts={fontList} suggest={designColors(design)} selType={sel?.type}
+              onColor={(c) => {
+                if (!sel) setBg({ type: 'color', color: c });
+                else if (sel.type === 'text' || sel.type === 'table' || sel.type === 'chart') updateSel({ color: c });
+                else if (sel.type === 'shape') updateSel({ fill: c });
+                else if (sel.type === 'qr') updateSel({ color: c });
+                else if (sel.icon) recolorIcon(sel, c);
+                else updateSel({ stroke: c, strokeWidth: sel.strokeWidth || Math.max(2, 6 * k) });
+              }}
+              onFont={async (f) => {
+                if (sel?.type === 'text') { await pickFont(f); return; }
+                await ensureFontKnown(f);
+                if (sel?.type === 'table' || sel?.type === 'chart') { updateSel({ fontFamily: f }); return; }
+                addEl(textEl({ text: f, fontFamily: f, fontSize: 64 * k, w: 700 * k }));
+              }}
+              onLogo={(l) => { const sc = Math.min((W * 0.35) / l.width, (H * 0.35) / l.height); addEl(imageEl({ src: l.src, w: l.width * sc, h: l.height * sc, fit: 'contain' })); }}
+            />
+          ) : null}
+
           {panel === 'elements' ? (
             <>
               <h4>Draw</h4>
@@ -941,6 +1057,25 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
                   </button>
                 ))}
               </div>
+              <h4>Charts</h4>
+              <div className="tile-grid">
+                {CHART_TYPES.map(([t, n]) => (
+                  <button key={t} className="tile" title={`${n} chart`} onClick={() => addEl(withDefaults(chartEl(t, { w: Math.min(W * 0.8, 900 * k), h: Math.min(H * 0.7, 560 * k) }), false))}>
+                    <MiniSvg el={chartEl(t, { id: `mini-${t}`, x: 4, y: 8, w: 92, h: 84, fontSize: 6 })} />
+                  </button>
+                ))}
+              </div>
+              <h4>Tables</h4>
+              <div className="tile-grid">
+                {[{}, { headerBg: '#16181d' }, { headerBg: '#155dfc', stripe: '' }, { headerBg: '#ffffff', headerColor: '#16181d', stripe: '', grid: false }].map((o, i) => (
+                  <button key={i} className="tile" title="Add a table" onClick={() => addEl(withDefaults(tableEl({ w: Math.min(W * 0.8, 900 * k), h: Math.min(H * 0.5, 320 * k), ...o }), false))}>
+                    <MiniSvg el={tableEl({ id: `mini-t${i}`, x: 6, y: 22, w: 88, h: 56, fontSize: 7, ...o })} />
+                  </button>
+                ))}
+              </div>
+              <h4>QR code</h4>
+              <button className="btn btn-sm" style={{ width: '100%' }} onClick={() => addEl(qrEl({ w: 360 * k, h: 360 * k, text: typeof location !== 'undefined' ? `${location.origin}/d/${id}` : 'https://jaceo.vercel.app' }))}>🔳 Add a QR code</button>
+              <p className="small muted" style={{ margin: '4px 0 0' }}>Starts as a link to this design. Type any link or text on the right.</p>
               <h4>Stickers</h4>
               <div className="tile-grid cols-6">
                 {EMOJI.map((em) => (
@@ -952,11 +1087,34 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
 
           {panel === 'text' ? (
             <>
-              <button className="btn btn-primary" style={{ width: '100%', marginBottom: 14 }} onClick={() => addEl(textEl({ text: 'Your text here', fontSize: 48 * k, w: 600 * k }))}>T  Add a text box</button>
+              <button className="btn btn-primary" style={{ width: '100%', marginBottom: 14 }} onClick={() => addEl(withDefaults(textEl({ text: 'Your text here', fontSize: 48 * k, w: 600 * k }), false))}>T  Add a text box</button>
               <h4>Default styles</h4>
-              <button className="text-preset" onClick={() => addEl(textEl({ text: 'Add a heading', fontFamily: 'Poppins', fontWeight: 700, fontSize: 110 * k, w: Math.min(W * 0.9, 1000 * k), align: 'center' }))}><span style={{ fontFamily: 'Poppins', fontWeight: 700, fontSize: 24 }}>Add a heading</span></button>
-              <button className="text-preset" onClick={() => addEl(textEl({ text: 'Add a subheading', fontFamily: 'Poppins', fontWeight: 400, fontSize: 64 * k, w: Math.min(W * 0.9, 800 * k), align: 'center' }))}><span style={{ fontFamily: 'Poppins', fontSize: 18 }}>Add a subheading</span></button>
-              <button className="text-preset" onClick={() => addEl(textEl({ text: 'Add a little bit of body text', fontSize: 36 * k, w: Math.min(W * 0.9, 700 * k), align: 'center' }))}><span style={{ fontSize: 13 }}>Add a little bit of body text</span></button>
+              <button className="text-preset" onClick={() => addEl(withDefaults(textEl({ text: 'Add a heading', fontFamily: 'Poppins', fontWeight: 700, fontSize: 110 * k, w: Math.min(W * 0.9, 1000 * k), align: 'center' }), true))}><span style={{ fontFamily: tdFont(true, 'Poppins'), fontWeight: 700, fontSize: 24 }}>Add a heading</span></button>
+              <button className="text-preset" onClick={() => addEl(withDefaults(textEl({ text: 'Add a subheading', fontFamily: 'Poppins', fontWeight: 400, fontSize: 64 * k, w: Math.min(W * 0.9, 800 * k), align: 'center' }), true))}><span style={{ fontFamily: tdFont(true, 'Poppins'), fontSize: 18 }}>Add a subheading</span></button>
+              <button className="text-preset" onClick={() => addEl(withDefaults(textEl({ text: 'Add a little bit of body text', fontSize: 36 * k, w: Math.min(W * 0.9, 700 * k), align: 'center' }), false))}><span style={{ fontFamily: tdFont(false, 'Inter'), fontSize: 13 }}>Add a little bit of body text</span></button>
+              <h4>Default text settings</h4>
+              <p className="small muted" style={{ marginTop: 0 }}>New text uses these. Apply them to text that's already there with the buttons below.</p>
+              <div className="prop">
+                <label style={{ gridColumn: 'span 2' }}>Heading font
+                  <select value={td.headingFont || ''} onChange={(e) => setTd({ headingFont: e.target.value })} style={{ fontFamily: td.headingFont || undefined }}>
+                    <option value="">Same as body font</option>
+                    {fontList.map((f) => <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>)}
+                  </select>
+                </label>
+                <label style={{ gridColumn: 'span 2' }}>Body font
+                  <select value={td.font || ''} onChange={(e) => setTd({ font: e.target.value })} style={{ fontFamily: td.font || undefined }}>
+                    <option value="">Each style's own font</option>
+                    {fontList.map((f) => <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>)}
+                  </select>
+                </label>
+              </div>
+              <ColorRow label="Text color" value={td.color || ''} onChange={(c) => setTd({ color: c })} colors={colors} />
+              <div className="row wrap" style={{ gap: 6, marginTop: 8 }}>
+                <button className="btn btn-sm" disabled={sel?.type !== 'text'} title="Use the selected text's font and color as the defaults" onClick={() => setTd({ font: sel.fontFamily, color: sel.color })}>Use selected text</button>
+                <button className="btn btn-sm" disabled={!td.font && !td.headingFont && !td.color} onClick={() => applyTd('page')}>Apply to this page</button>
+                <button className="btn btn-sm btn-primary" disabled={!td.font && !td.headingFont && !td.color} onClick={() => applyTd('all')}>Apply to all</button>
+                {td.font || td.headingFont || td.color ? <button className="btn btn-sm btn-ghost" onClick={() => commit((d) => { const { textDefaults, ...rest } = d; return rest; })}>Reset</button> : null}
+              </div>
               <h4>Buttons</h4>
               <p className="small muted" style={{ marginTop: 0 }}>Add one, then choose where it goes under {isSite ? '“When clicked, go to”' : '“Link”'} (or right-click it).</p>
               <div className="row wrap" style={{ gap: 6 }}>
@@ -1034,6 +1192,24 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
 
           {panel === 'background' ? (
             <>
+              <h4>Every {isVideo ? 'scene' : 'page'}</h4>
+              {page.background?.type === 'same' ? <p className="small muted" style={{ marginTop: 0 }}>This {isVideo ? 'scene' : 'page'} uses the background of the one before it. Pick anything below to give it its own.</p> : null}
+              <div className="row wrap" style={{ gap: 6 }}>
+                {pi > 0 ? (
+                  <button className={`btn btn-sm ${page.background?.type === 'same' ? 'active' : ''}`}
+                    onClick={() => setBg(page.background?.type === 'same' ? { ...resolveBg(design, page) } : { type: 'same' })}>
+                    ↩ Same as previous {isVideo ? 'scene' : 'page'}
+                  </button>
+                ) : null}
+                <button className="btn btn-sm" disabled={design.pages.length < 2} title="Every other page follows this one's background (change it here and they all change)"
+                  onClick={() => {
+                    const bg = resolveBg(design, page);
+                    commit((d) => ({ ...d, pages: d.pages.map((p, i) => ({ ...p, background: i === 0 ? bg : { type: 'same' } })) }));
+                    setPageIdx(0);
+                  }}>
+                  Use on all {isVideo ? 'scenes' : 'pages'}
+                </button>
+              </div>
               <h4>Colors</h4>
               <div className="tile-grid cols-6">
                 {SWATCHES.map((c) => <button key={c} className="swatch" style={{ background: c }} onClick={() => setBg({ type: 'color', color: c })} title={c} />)}
@@ -1074,8 +1250,8 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
               {!page.elements.length ? <p className="small muted">This page is empty.</p> : null}
               {[...page.elements].reverse().map((e) => (
                 <div key={e.id} className={`layer ${e.id === selId ? 'active' : ''}`} onClick={() => setSelId(e.id)}>
-                  <span>{e.type === 'text' ? 'T' : e.type === 'image' ? '🖼' : e.type === 'line' ? '—' : e.type === 'draw' ? '✏️' : '◆'}</span>
-                  <span className="name" style={{ opacity: e.hidden ? 0.4 : 1 }}>{e.type === 'text' ? e.text.slice(0, 40) : e.type === 'shape' ? e.shape : e.type}</span>
+                  <span>{e.type === 'text' ? 'T' : e.type === 'image' ? (e.icon ? '⭐' : '🖼') : e.type === 'line' ? '—' : e.type === 'draw' ? '✏️' : e.type === 'chart' ? '📊' : e.type === 'table' ? '▦' : e.type === 'qr' ? '🔳' : '◆'}</span>
+                  <span className="name" style={{ opacity: e.hidden ? 0.4 : 1 }}>{e.type === 'text' ? e.text.slice(0, 40) : e.type === 'shape' ? e.shape : e.type === 'qr' ? 'QR code' : e.icon ? 'icon' : e.type}</span>
                   <button title={e.hidden ? 'Show' : 'Hide'} onClick={(ev) => { ev.stopPropagation(); updateEl(e.id, { hidden: !e.hidden }); }}>{e.hidden ? '🙈' : '👁'}</button>
                   <button title={e.locked ? 'Unlock' : 'Lock'} onClick={(ev) => { ev.stopPropagation(); updateEl(e.id, { locked: !e.locked }); }}>{e.locked ? '🔒' : '🔓'}</button>
                 </div>
@@ -1096,6 +1272,8 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
           >
             <div className="ed-canvas-wrap" ref={wrapRef} style={{ width: W * zoom, height: H * zoom, background: page.background?.type === 'none' ? 'repeating-conic-gradient(#ddd 0 25%, #fff 0 50%) 0 0 / 20px 20px' : undefined }}
               onPointerDown={onCanvasDown} onDoubleClick={onCanvasDouble}
+              onPointerMove={(e) => { if (live) posRef.current = toDesign(e); }}
+              onPointerLeave={() => { posRef.current = null; }}
               onContextMenu={(e) => {
                 e.preventDefault();
                 const t = e.target.closest?.('[data-id]');
@@ -1107,6 +1285,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
               {guides.map((g, i) => (
                 <div key={i} className="guide" style={g.v ? { left: g.at * zoom, top: 0, width: 1, height: H * zoom } : { top: g.at * zoom, left: 0, height: 1, width: W * zoom }} />
               ))}
+              {live ? <LiveLayer people={people} page={pi} zoom={zoom} elements={page.elements} /> : null}
               {pen ? <div className="pen-layer" title="Drawing with the pen (Esc to stop)" /> : null}
               {stroke ? (
                 <svg className="pen-live" viewBox={`0 0 ${W} ${H}`} width={W * zoom} height={H * zoom}>
@@ -1149,8 +1328,14 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
             <span style={{ width: 40 }}>{Math.round(zoom * 100)}%</span>
             <button className="btn btn-ghost btn-sm" onClick={() => setAutoFit(true) || fit()}>Fit</button>
           </div>
-          <div className="ed-pages">
-            {design.pages.map((p, i) => (
+          {isVideo ? (
+            <Timeline
+              design={design} pi={pi} setPi={(i) => { setPageIdx(i); setEditingId(null); }} selId={selId} setSelId={setSelId}
+              wrapEl={wrapRef.current} zoom={zoom} commit={commit} snapshot={snapshot} onAddScene={() => addPage(design.pages.length - 1)}
+            />
+          ) : null}
+          <div className={`ed-pages ${isVideo ? 'slim' : ''}`}>
+            {!isVideo && design.pages.map((p, i) => (
               <div key={p.id} className={`ed-page-thumb ${i === pi ? 'active' : ''}`} onClick={() => { setPageIdx(i); setSelId(null); setEditingId(null); }}>
                 <DesignPage design={design} page={p} width={Math.round((72 * design.width) / design.height)} height={72} uidPrefix={`pg${i}-`} />
                 <span className="n">{i + 1}{isVideo ? ` · ${Number(p.duration) || 3}s` : ''}</span>
@@ -1169,7 +1354,8 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
           {sel ? (
             <Props
               el={sel} update={updateSel} k={k} fonts={fontList} colors={colors} isVideo={isVideo} isSite={isSite} pages={design.pages}
-              onPreview={() => setModal('play')}
+              canAnimate={!isSite && !isBoard} recolorIcon={(c) => recolorIcon(sel, c)}
+              onPreview={() => setModal(isVideo ? 'play' : 'present')}
               onFont={(e) => loadFont(e)}
               actions={{ deleteSel, duplicateSel, reorder, alignSel, replace: () => replaceRef.current?.click(), setBg: () => toBackground(sel), aiText: () => setAi('text') }}
             />
@@ -1183,7 +1369,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
                   <div className="prop">
                     <label style={{ gridColumn: 'span 2' }}>Transition into this scene
                       <select value={page.transition || 'fade'} onChange={(e) => commit((d) => mapPage(d, (p) => ({ ...p, transition: e.target.value })))}>
-                        <option value="none">None (cut)</option><option value="fade">Fade</option><option value="slide">Slide</option><option value="zoom">Zoom</option>
+                        {TRANSITIONS.map((t) => <option key={t} value={t}>{TRANSITION_NAMES[t]}</option>)}
                       </select>
                     </label>
                   </div>
@@ -1207,6 +1393,22 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
                     </>
                   )}
                   <input ref={audioRef} type="file" accept="audio/*" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) addAudio(f); }} />
+                </>
+              ) : null}
+              {!isVideo && !isSite && !isBoard ? (
+                <>
+                  <div className="prop">
+                    <label style={{ gridColumn: 'span 2' }}>Transition into this page (when presenting)
+                      <select value={page.transition || 'none'} onChange={(e) => commit((d) => mapPage(d, (p) => ({ ...p, transition: e.target.value })))}>
+                        {TRANSITIONS.map((t) => <option key={t} value={t}>{TRANSITION_NAMES[t]}</option>)}
+                      </select>
+                    </label>
+                  </div>
+                  <div className="row wrap" style={{ gap: 6, marginTop: 8 }}>
+                    <button className="btn btn-sm" onClick={() => commit((d) => ({ ...d, pages: d.pages.map((p) => ({ ...p, transition: page.transition || 'none' })) }))}>Use for all pages</button>
+                    <button className="btn btn-sm btn-primary" onClick={() => setModal('present')}>▶ Present from here</button>
+                  </div>
+                  <div className="small muted" style={{ marginTop: 6 }}>Select something on the page to give it an animation.</div>
                 </>
               ) : null}
               {isSite ? (
@@ -1276,6 +1478,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
         <ShareModal id={id} title={title} role={role} visibility={visibility} onVisibility={changeVisibility} onClose={() => setModal(null)}
           onPrint={print} onDownload={() => setModal('download')} />
       ) : null}
+      {modal === 'history' ? <VersionHistory id={id} beforeSave={saveNow} onClose={() => setModal(null)} /> : null}
       {modal === 'present' ? <Presenter design={design} start={pi} onClose={() => setModal(null)} /> : null}
       {modal === 'play' ? (
         <div className="modal-back" onMouseDown={(e) => e.target === e.currentTarget && setModal(null)}>
@@ -1396,15 +1599,15 @@ function ResizeMenu({ W, H, onApply, onCopy, onClose }) {
   );
 }
 
-function Props({ el, update, actions, onFont, k, fonts = FONTS, colors = [], isVideo, onPreview, isSite, pages = [] }) {
+function Props({ el, update, actions, onFont, k, fonts = FONTS, colors = [], isVideo, onPreview, isSite, pages = [], canAnimate, recolorIcon }) {
   const f = el.filters || {};
   const sh = el.shadow || {};
   const an = el.anim || {};
   return (
     <>
-      {isVideo ? (
+      {canAnimate ? (
         <>
-          <h4>Animation</h4>
+          <h4>{isVideo ? 'Animation' : 'Animation (when presenting)'}</h4>
           <div className="prop">
             <label style={{ gridColumn: 'span 2' }}>How it appears
               <select value={an.type || 'none'} onChange={(e) => update({ anim: { duration: 0.7, delay: 0, ...an, type: e.target.value } })}>
@@ -1418,7 +1621,7 @@ function Props({ el, update, actions, onFont, k, fonts = FONTS, colors = [], isV
               <Range label="Speed" min={0.1} max={4} step={0.1} value={Number(an.duration) || 0.7} suffix="s" onChange={(v) => update({ anim: { ...an, duration: v } })} />
             </>
           ) : null}
-          <button className="btn btn-sm" onClick={onPreview} style={{ marginTop: 4 }}>▶ Preview scene</button>
+          <button className="btn btn-sm" onClick={onPreview} style={{ marginTop: 4 }}>{isVideo ? '▶ Preview scene' : '▶ Present from here'}</button>
         </>
       ) : null}
       {el.type === 'text' ? (
@@ -1502,7 +1705,13 @@ function Props({ el, update, actions, onFont, k, fonts = FONTS, colors = [], isV
 
       {el.type === 'image' ? (
         <>
-          <h4>Photo</h4>
+          {el.icon && el.iconColor ? (
+            <>
+              <h4>Icon</h4>
+              <ColorRow label="Icon color" value={el.iconColor} onChange={recolorIcon} colors={colors} />
+            </>
+          ) : null}
+          <h4>{el.icon ? 'Image' : 'Photo'}</h4>
           <div className="toggle-row">
             <button className="btn" onClick={actions.replace}>Replace</button>
             <button className="btn" onClick={actions.setBg}>Set as background</button>
@@ -1552,6 +1761,8 @@ function Props({ el, update, actions, onFont, k, fonts = FONTS, colors = [], isV
         </>
       ) : null}
 
+      {el.type === 'chart' || el.type === 'table' || el.type === 'qr' ? <BlockProps el={el} update={update} fonts={fonts} colors={colors} onFont={onFont} /> : null}
+
       <h4>{isSite ? 'When clicked, go to' : 'Link'}</h4>
       <LinkPicker value={el.link || ''} onChange={(link) => update({ link })} pages={pages} isSite={isSite} />
 
@@ -1600,6 +1811,135 @@ function Props({ el, update, actions, onFont, k, fonts = FONTS, colors = [], isV
         <button className="btn" onClick={actions.duplicateSel}>⧉ Duplicate</button>
         <button className="btn btn-danger" onClick={actions.deleteSel}>🗑 Delete</button>
       </div>
+    </>
+  );
+}
+
+/** Settings for charts, tables and QR codes. */
+function BlockProps({ el, update, fonts, colors, onFont }) {
+  const [csv, setCsv] = useState(() => (el.type === 'chart' ? chartToCsv(el.chart) : ''));
+  const [csvFor, setCsvFor] = useState(el.id);
+  if (csvFor !== el.id) { setCsvFor(el.id); setCsv(el.type === 'chart' ? chartToCsv(el.chart) : ''); }
+  const fontRow = (
+    <div className="prop">
+      <label style={{ gridColumn: 'span 2' }}>Font
+        <select value={el.fontFamily || 'Inter'} onChange={(e) => { update({ fontFamily: e.target.value }); onFont({ fontFamily: e.target.value, fontWeight: 400 }); }} style={{ fontFamily: el.fontFamily }}>
+          {[...new Set([...fonts, el.fontFamily || 'Inter'])].map((f) => <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>)}
+        </select>
+      </label>
+      <Num label="Text size (0 = auto)" value={el.fontSize || 0} min={0} onChange={(v) => update({ fontSize: v > 0 ? v : undefined })} />
+    </div>
+  );
+
+  if (el.type === 'qr') {
+    return (
+      <>
+        <h4>QR code</h4>
+        <label className="field small">Link or text
+          <input className="input" value={el.text || ''} onChange={(e) => update({ text: e.target.value.slice(0, 1200) })} placeholder="https://…" />
+        </label>
+        <ColorRow label="Color" value={el.color} onChange={(c) => update({ color: c })} colors={colors} />
+        <div className="toggle-row">
+          <button className={`btn ${el.bg ? 'active' : ''}`} onClick={() => update({ bg: el.bg ? '' : '#ffffff' })}>Background</button>
+        </div>
+        {el.bg ? <ColorRow label="Background" value={el.bg} onChange={(c) => update({ bg: c })} colors={colors} /> : null}
+        {el.bg ? <Range label="Corners" min={0} max={Math.round(Math.min(el.w, el.h) / 4)} value={Math.round(el.radius || 0)} onChange={(v) => update({ radius: v })} /> : null}
+        <p className="small muted">Keep good contrast (dark on light) so phones can scan it.</p>
+      </>
+    );
+  }
+
+  if (el.type === 'chart') {
+    const c = el.chart || {};
+    const pie = c.type === 'pie' || c.type === 'donut';
+    const setC = (patch) => update({ chart: { ...c, ...patch } });
+    return (
+      <>
+        <h4>Chart</h4>
+        <div className="toggle-row">
+          {CHART_TYPES.map(([t, n]) => <button key={t} className={`btn ${(c.type || 'bar') === t ? 'active' : ''}`} onClick={() => setC({ type: t })}>{n}</button>)}
+        </div>
+        <label className="field small" style={{ marginTop: 8 }}>Title
+          <input className="input" value={c.title || ''} onChange={(e) => setC({ title: e.target.value.slice(0, 120) })} placeholder="(none)" />
+        </label>
+        <label className="field small" style={{ marginTop: 8 }}>Data — first line is the names, then one line per item
+          <textarea className="input mono" rows={6} value={csv} onChange={(e) => { setCsv(e.target.value); update({ chart: csvToChart(e.target.value, c) }); }} />
+        </label>
+        <div className="small muted">Like a spreadsheet: <code>Month, Sales, Costs</code> then <code>Jan, 12, 8</code>. You can paste from a spreadsheet too.</div>
+        {pie ? (
+          <>
+            <h4>Slice colors</h4>
+            {(c.labels || []).slice(0, 12).map((l, i) => (
+              <ColorRow key={i} label={l || `Slice ${i + 1}`} value={c.colors?.[i] || CHART_COLORS[i % CHART_COLORS.length]}
+                onChange={(col) => { const cols = [...(c.colors || [])]; for (let j = 0; j <= i; j++) cols[j] = cols[j] || CHART_COLORS[j % CHART_COLORS.length]; cols[i] = col; setC({ colors: cols }); }} />
+            ))}
+          </>
+        ) : (
+          <>
+            <h4>Series colors</h4>
+            {(c.series || []).map((s, i) => (
+              <ColorRow key={i} label={s.name} value={s.color || CHART_COLORS[i % CHART_COLORS.length]} colors={colors}
+                onChange={(col) => setC({ series: c.series.map((x, j) => (j === i ? { ...x, color: col } : x)) })} />
+            ))}
+          </>
+        )}
+        <div className="toggle-row" style={{ marginTop: 8 }}>
+          <button className={`btn ${c.legend !== false ? 'active' : ''}`} onClick={() => setC({ legend: c.legend === false })}>Legend</button>
+          <button className={`btn ${pie ? c.values !== false ? 'active' : '' : c.values ? 'active' : ''}`} onClick={() => setC({ values: pie ? c.values === false : !c.values })}>Numbers</button>
+          <button className={`btn ${el.bg ? 'active' : ''}`} onClick={() => update({ bg: el.bg ? '' : '#ffffff' })}>Card</button>
+        </div>
+        <ColorRow label="Text color" value={el.color} onChange={(col) => update({ color: col })} colors={colors} />
+        {el.bg ? <ColorRow label="Card color" value={el.bg} onChange={(col) => update({ bg: col })} colors={colors} /> : null}
+        {el.bg ? <Range label="Card corners" min={0} max={Math.round(Math.min(el.w, el.h) / 6)} value={Math.round(el.radius || 0)} onChange={(v) => update({ radius: v })} /> : null}
+        {fontRow}
+      </>
+    );
+  }
+
+  // table
+  const rows = Array.isArray(el.rows) && el.rows.length ? el.rows : [['']];
+  const nc = Math.max(1, ...rows.map((r) => r.length));
+  const setCell = (r, c, v) => update({ rows: rows.map((row, i) => (i === r ? Array.from({ length: nc }, (_, j) => (j === c ? v : row[j] ?? '')) : row)) });
+  const grow = (dr, dc) => {
+    let next = rows.map((r) => Array.from({ length: nc }, (_, j) => r[j] ?? ''));
+    if (dr > 0) next.push(Array(nc).fill(''));
+    if (dr < 0 && next.length > 1) next.pop();
+    if (dc > 0) next = next.map((r) => [...r, '']);
+    if (dc < 0 && nc > 1) next = next.map((r) => r.slice(0, -1));
+    const rh = el.h / rows.length;
+    update({ rows: next, h: dr ? Math.max(20, el.h + dr * rh) : el.h });
+  };
+  return (
+    <>
+      <h4>Table</h4>
+      <div className="table-edit" style={{ gridTemplateColumns: `repeat(${nc}, minmax(60px, 1fr))` }}>
+        {rows.map((row, r) => Array.from({ length: nc }, (_, c) => (
+          <input key={`${r}-${c}`} className={r === 0 && el.header !== false ? 'head' : ''} value={row[c] ?? ''} onChange={(e) => setCell(r, c, e.target.value.slice(0, 200))} />
+        )))}
+      </div>
+      <div className="toggle-row" style={{ marginTop: 6 }}>
+        <button className="btn" onClick={() => grow(1, 0)}>＋ Row</button>
+        <button className="btn" disabled={rows.length < 2} onClick={() => grow(-1, 0)}>− Row</button>
+        <button className="btn" disabled={nc >= 12} onClick={() => grow(0, 1)}>＋ Column</button>
+        <button className="btn" disabled={nc < 2} onClick={() => grow(0, -1)}>− Column</button>
+      </div>
+      <div className="toggle-row" style={{ marginTop: 6 }}>
+        <button className={`btn ${el.header !== false ? 'active' : ''}`} onClick={() => update({ header: el.header === false })}>Header row</button>
+        <button className={`btn ${el.stripe ? 'active' : ''}`} onClick={() => update({ stripe: el.stripe ? '' : '#f4f5f7' })}>Stripes</button>
+        <button className={`btn ${el.border ? 'active' : ''}`} onClick={() => update({ border: el.border ? '' : '#dfe2e7' })}>Lines</button>
+        <button className={`btn ${el.grid !== false ? 'active' : ''}`} onClick={() => update({ grid: el.grid === false })}>Column lines</button>
+      </div>
+      <div className="toggle-row">
+        {['left', 'center', 'right'].map((a) => <button key={a} className={`btn ${(el.align || 'left') === a ? 'active' : ''}`} onClick={() => update({ align: a })}>{a === 'left' ? '⯇' : a === 'center' ? '≡' : '⯈'}</button>)}
+      </div>
+      {el.header !== false ? <ColorRow label="Header" value={el.headerBg} onChange={(c) => update({ headerBg: c })} colors={colors} /> : null}
+      {el.header !== false ? <ColorRow label="Header text" value={el.headerColor} onChange={(c) => update({ headerColor: c })} colors={colors} /> : null}
+      <ColorRow label="Text" value={el.color} onChange={(c) => update({ color: c })} colors={colors} />
+      <ColorRow label="Cells" value={el.cellBg} onChange={(c) => update({ cellBg: c })} colors={colors} />
+      {el.stripe ? <ColorRow label="Stripes" value={el.stripe} onChange={(c) => update({ stripe: c })} colors={colors} /> : null}
+      {el.border ? <ColorRow label="Lines" value={el.border} onChange={(c) => update({ border: c })} colors={colors} /> : null}
+      <Range label="Corners" min={0} max={Math.round(Math.min(el.w, el.h) / 4)} value={Math.round(el.radius || 0)} onChange={(v) => update({ radius: v })} />
+      {fontRow}
     </>
   );
 }

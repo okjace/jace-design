@@ -1,4 +1,5 @@
 import { filterCss, HEART_PATH, lineBaseline, shapePoints, textLines } from '@/lib/design';
+import { BLOCK_TYPES, blockShapes, resolveBg } from '@/lib/blocks';
 
 // Renders one page of a design as SVG. Pure (no hooks) so it works on the server and the client.
 
@@ -138,6 +139,16 @@ export function Element({ el, pid }) {
     );
   }
 
+  if (BLOCK_TYPES.includes(el.type)) {
+    // Charts, tables and QR codes (laid out in lib/blocks.js).
+    return (
+      <g {...common}>
+        <rect x={el.x} y={el.y} width={el.w} height={el.h} fill="transparent" />
+        {blockShapes(el).map((s, i) => <Piece key={i} s={s} />)}
+      </g>
+    );
+  }
+
   if (el.type === 'shape') {
     const paint = {
       fill: el.fill || 'none', stroke: el.strokeWidth ? el.stroke : 'none', strokeWidth: el.strokeWidth || 0,
@@ -170,6 +181,18 @@ export function Element({ el, pid }) {
   return null;
 }
 
+function Piece({ s }) {
+  if (s.k === 'rect') return <rect x={s.x} y={s.y} width={Math.max(0, s.w)} height={Math.max(0, s.h)} rx={s.r || 0} fill={s.fill || 'none'} stroke={s.stroke || undefined} strokeWidth={s.stroke ? s.sw : undefined} opacity={s.opacity} />;
+  if (s.k === 'line') return <line x1={s.x1} y1={s.y1} x2={s.x2} y2={s.y2} stroke={s.stroke} strokeWidth={s.sw} />;
+  if (s.k === 'path') return <path d={s.d} fill={s.fill || 'none'} stroke={s.stroke || undefined} strokeWidth={s.stroke ? s.sw : undefined} strokeLinejoin="round" strokeLinecap="round" opacity={s.opacity} />;
+  if (s.k === 'text') {
+    return (
+      <text x={s.x} y={s.y} fontFamily={`"${s.font || 'Inter'}", sans-serif`} fontSize={s.size} fontWeight={s.weight || 400} fill={s.color} textAnchor={s.anchor || 'start'} style={{ whiteSpace: 'pre' }}>{s.text}</text>
+    );
+  }
+  return null;
+}
+
 /**
  * One page as an SVG. `width` can be a CSS size (e.g. "100%") — the viewBox keeps everything in design units.
  */
@@ -189,7 +212,7 @@ export default function DesignPage({ design, page, width = '100%', height, class
       height={height}
       preserveAspectRatio="xMidYMid meet"
     >
-      <Background bg={page.background} w={W} h={H} pid={pid} />
+      <Background bg={resolveBg(design, page)} w={W} h={H} pid={pid} />
       {page.elements.map((el) => (
         <Element key={el.id} el={el} pid={pid} />
       ))}

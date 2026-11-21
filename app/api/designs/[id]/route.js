@@ -3,6 +3,7 @@ import { one, q } from '@/lib/db';
 import { canEdit, cleanPerms, loadDesign, shareDefaults } from '@/lib/access';
 import { normalizeDesign } from '@/lib/design';
 import { sanitizeDesign } from '@/lib/sanitize';
+import { snapshotVersion } from '@/lib/versions';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,7 +12,8 @@ export const GET = handler(async (_req, { params }) => {
   const user = await getUser();
   const { design, role } = await loadDesign(id, user);
   if (!design || !role) return json({ error: 'Not found' }, 404);
-  return json({ design: { id: design.id, title: design.title, data: design.data, visibility: design.visibility, is_template: design.is_template, category: design.category, owner_username: design.owner_username,
+  const ver = await one('SELECT updated_at::text AS v FROM designs WHERE id = $1', [id]);
+  return json({ version: ver?.v || null, design: { id: design.id, title: design.title, data: design.data, visibility: design.visibility, is_template: design.is_template, category: design.category, owner_username: design.owner_username,
     ...(role === 'owner' ? { link_perms: design.link_perms, require_request: design.require_request, default_person_perms: shareDefaults(user).person_perms } : {}) }, role });
 });
 
@@ -48,6 +50,7 @@ export const PUT = handler(async (request, { params }) => {
     vals.push(body.expected);
     where += ` AND updated_at = $${vals.length}::timestamptz`;
   }
+  if (body.design) await snapshotVersion(id, user.id);
   const rows = await q(
     `UPDATE designs SET ${sets.join(', ')}${edit ? ', updated_at = NOW()' : ''} WHERE ${where} RETURNING updated_at::text AS v`,
     vals

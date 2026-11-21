@@ -40,6 +40,8 @@ export function useSaver({ id, version, getBody, onLocked, onSaved, onRestore })
     retry: () => ref.current?.retry(),
     stop: () => ref.current?.stop(),
     hasUnsaved: () => !!ref.current?.hasUnsaved(),
+    version: () => ref.current?.version() || null,
+    setVersion: (v) => ref.current?.setVersion(v),
   };
 
   api.notices = (
