@@ -67,7 +67,7 @@ export function Element({ el, pid }) {
     return (
       <g {...common}>
         <rect x={el.x} y={el.y} width={el.w} height={el.h} fill="transparent" />
-        {el.bgColor ? <rect x={el.x - el.fontSize * 0.25} y={el.y - el.fontSize * 0.1} width={el.w + el.fontSize * 0.5} height={el.h + el.fontSize * 0.2} rx={el.fontSize * 0.2} fill={el.bgColor} /> : null}
+        {el.bgColor ? (() => { const px = el.fontSize * (el.bgPadX ?? 0.25), py = el.fontSize * (el.bgPadY ?? 0.1); return <rect x={el.x - px} y={el.y - py} width={el.w + px * 2} height={el.h + py * 2} rx={Math.min((el.h + py * 2) / 2, el.fontSize * (el.bgRadius ?? 0.2))} fill={el.bgColor} stroke={el.bgBorder || undefined} strokeWidth={el.bgBorder ? Math.max(1, el.fontSize / 16) : undefined} />; })() : null}
         <text
           fontFamily={`"${el.fontFamily}", sans-serif`}
           fontSize={el.fontSize}

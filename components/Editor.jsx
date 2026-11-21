@@ -865,7 +865,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
       ) : null}
       {menu ? (
         <ContextMenu
-          x={menu.x} y={menu.y} el={sel} page={page} colors={colors} hasClip={!!clipRef.current}
+          x={menu.x} y={menu.y} el={sel} page={page} pages={design.pages} isSite={isSite} colors={colors} hasClip={!!clipRef.current}
           fontInfo={{ designFonts: [...(design.fonts || []).map((f) => f.family), ...(design.googleFonts || [])], uploaded: (design.fonts || []).map((f) => f.family) }}
           onClose={() => setMenu(null)}
           act={{
@@ -979,6 +979,29 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
               <button className="text-preset" onClick={() => addEl(textEl({ text: 'Add a heading', fontFamily: 'Poppins', fontWeight: 700, fontSize: 110 * k, w: Math.min(W * 0.9, 1000 * k), align: 'center' }))}><span style={{ fontFamily: 'Poppins', fontWeight: 700, fontSize: 24 }}>Add a heading</span></button>
               <button className="text-preset" onClick={() => addEl(textEl({ text: 'Add a subheading', fontFamily: 'Poppins', fontWeight: 400, fontSize: 64 * k, w: Math.min(W * 0.9, 800 * k), align: 'center' }))}><span style={{ fontFamily: 'Poppins', fontSize: 18 }}>Add a subheading</span></button>
               <button className="text-preset" onClick={() => addEl(textEl({ text: 'Add a little bit of body text', fontSize: 36 * k, w: Math.min(W * 0.9, 700 * k), align: 'center' }))}><span style={{ fontSize: 13 }}>Add a little bit of body text</span></button>
+              <h4>Buttons</h4>
+              <p className="small muted" style={{ marginTop: 0 }}>Add one, then choose where it goes under {isSite ? '“When clicked, go to”' : '“Link”'} (or right-click it).</p>
+              <div className="row wrap" style={{ gap: 6 }}>
+                {[
+                  ['Primary', { bgColor: '#1f9d5a', color: '#ffffff' }],
+                  ['Dark', { bgColor: '#16181d', color: '#ffffff' }],
+                  ['Light', { bgColor: '#ffffff', color: '#16181d', bgBorder: '#dfe2e7' }],
+                  ['Soft', { bgColor: '#e2f4ea', color: '#1f9d5a' }],
+                ].map(([name, style]) => (
+                  <button key={name} className="btn btn-sm" style={{ background: style.bgColor, color: style.color, borderColor: style.bgBorder || style.bgColor, borderRadius: 99 }}
+                    onClick={() => {
+                      const fs = 34 * k;
+                      const el = addEl(textEl({
+                        text: 'Click me', fontFamily: 'Poppins', fontWeight: 700, fontSize: fs, w: 260 * k, align: 'center',
+                        bgPadX: 0.9, bgPadY: 0.55, bgRadius: 2, ...style,
+                        link: isSite && design.pages.length > 1 ? `#${sectionAnchor(design.pages[1], 1)}` : '',
+                      }));
+                      return el;
+                    }}>
+                    {name}
+                  </button>
+                ))}
+              </div>
               <h4>Font combinations</h4>
               {FONT_COMBOS.map(([a, b, ta, tb]) => (
                 <button key={a + b} className="text-preset" onClick={() => {
@@ -1118,6 +1141,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
                     <div key={h} className={`handle ${h}`} style={{ left: `${hpos[h][0]}%`, top: `${hpos[h][1]}%`, cursor: cursor[h] }} onPointerDown={(e) => onHandleDown(e, h)} />
                   ))}
                   {!sel.locked ? <div className="handle rot" style={{ left: '50%', top: -30 }} onPointerDown={(e) => onHandleDown(e, 'rot')} title="Rotate">⟳</div> : null}
+                  {sel.link ? <div className="link-badge">🔗 {linkLabel(sel.link, design.pages)}</div> : null}
                 </div>
               ) : null}
               {editingEl ? (

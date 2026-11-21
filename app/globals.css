@@ -495,3 +495,6 @@ h3 { font-size: 16px; margin: 0 0 8px; }
 .sheet-tab.on { background: var(--brand); color: var(--on-brand); border-color: var(--brand); }
 .sheet-thumb { width: 100%; height: 100%; border-collapse: collapse; background: #fff; font: 9px Geist, sans-serif; color: #16181d; table-layout: fixed; }
 .sheet-thumb td { border: 1px solid #e5e7eb; padding: 1px 3px; white-space: nowrap; overflow: hidden; }
+
+/* "🔗 where this goes" label on the selected item */
+.link-badge { position: absolute; left: 0; bottom: -28px; white-space: nowrap; background: var(--brand); color: var(--on-brand); font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 99px; pointer-events: none; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }

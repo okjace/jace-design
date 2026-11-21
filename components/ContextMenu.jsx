@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import FontPicker from './FontPicker';
+import LinkPicker from './LinkPicker';
 
 const QUICK = ['#ffffff', '#16181d', '#1f9d5a', '#3ddc84', '#155dfc', '#e40014', '#f99c00', '#fcbb00', '#7c3aed', '#ec4899'];
 const WEIGHTS = [[100, 'Thin'], [200, 'Extra light'], [300, 'Light'], [400, 'Regular'], [500, 'Medium'], [600, 'Semi bold'], [700, 'Bold'], [800, 'Extra bold'], [900, 'Black']];
@@ -102,7 +103,20 @@ function TextSettings({ el, act, swatches, fontInfo }) {
 }
 
 // The editor's right-click menu. `el` is the element under the pointer (or null for the page).
-export default function ContextMenu({ x, y, el, page, colors, fontInfo = { designFonts: [], uploaded: [] }, hasClip, act, onClose }) {
+/** "When clicked, go to" — a page of this website, a web address or an email. */
+function LinkSection({ el, act, pages, isSite }) {
+  return (
+    <>
+      <div className="ctx-label">{isSite ? 'When clicked, go to' : 'Link'}</div>
+      <div className="ctx-row" style={{ display: 'block' }}>
+        <LinkPicker value={el.link || ''} onChange={(link) => act.update({ link })} pages={pages} isSite={isSite} compact />
+      </div>
+      <div className="ctx-sep" />
+    </>
+  );
+}
+
+export default function ContextMenu({ x, y, el, page, pages = [], isSite = false, colors, fontInfo = { designFonts: [], uploaded: [] }, hasClip, act, onClose }) {
   const ref = useRef(null);
   const [pos, setPos] = useState({ left: x, top: y });
   const isText = el?.type === 'text';
@@ -143,7 +157,9 @@ export default function ContextMenu({ x, y, el, page, colors, fontInfo = { desig
             <span className="ctx-gap" />
             <Icon title="Delete" danger onClick={run(act.deleteSel)}>🗑</Icon>
           </div>
+          {isSite ? <LinkSection el={el} act={act} pages={pages} isSite={isSite} /> : null}
           <TextSettings el={el} act={act} swatches={swatches} fontInfo={fontInfo} />
+          {!isSite ? <LinkSection el={el} act={act} pages={pages} isSite={isSite} /> : null}
         </>
       ) : el ? (
         <>
@@ -186,6 +202,8 @@ export default function ContextMenu({ x, y, el, page, colors, fontInfo = { desig
               <div className="ctx-sep" />
             </>
           ) : null}
+
+          <LinkSection el={el} act={act} pages={pages} isSite={isSite} />
 
           <Slider label="Transparency" value={Math.round((1 - (el.opacity ?? 1)) * 100)} min={0} max={100} suffix="%" onChange={(v) => act.update({ opacity: 1 - v / 100 })} />
           <div className="ctx-row">
