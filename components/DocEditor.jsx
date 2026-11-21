@@ -6,6 +6,7 @@ import AiHelper from './AiHelper';
 import SaveTemplate from './SaveTemplate';
 import ImageSearch from './ImageSearch';
 import { AccessLost, useAccessWatch } from './AccessWatch';
+import { useSaver } from './useSaver';
 import { DOC_SIZES, FONTS, normalizeDesign } from '@/lib/design';
 import { cleanHtml, markdownToHtml, textToHtml } from '@/lib/htmlClean';
 import { fileToDataUrl } from '@/lib/export';
@@ -18,11 +19,10 @@ const STYLES = [['p', 'Normal text'], ['h1', 'Title'], ['h2', 'Heading 1'], ['h3
 const SPACING = [['1', 'Single'], ['1.15', '1.15'], ['1.5', '1.5'], ['2', 'Double']];
 const BLOCKS = 'p,h1,h2,h3,h4,h5,h6,li,blockquote,pre,div';
 
-export default function DocEditor({ id, initialDesign, initialTitle, initialVisibility, role }) {
+export default function DocEditor({ id, initialDesign, initialTitle, initialVisibility, role, version }) {
   const [meta, setMeta] = useState(() => normalizeDesign(initialDesign));
   const [title, setTitle] = useState(initialTitle);
   const [visibility, setVisibility] = useState(initialVisibility);
-  const [save, setSave] = useState('saved');
   const [modal, setModal] = useState(null); // share | download | template | photos | page
   const [ai, setAi] = useState(null);
   const [zoom, setZoom] = useState(1);
@@ -43,7 +43,7 @@ export default function DocEditor({ id, initialDesign, initialTitle, initialVisi
   const imgRef = useRef(null);
   // If the owner removes you (or makes you view-only) while you're editing, stop saving and say so.
   const lockedOut = useRef(false);
-  const { lost, setLost } = useAccessWatch(id, role, () => { lockedOut.current = true; clearTimeout(timer.current); });
+  const { lost, setLost } = useAccessWatch(id, role, () => { lockedOut.current = true; clearTimeout(timer.current); saver.stop(); });
 
   const margin = meta.page?.margin ?? 1;
   const fonts = [...new Set([...(meta.fonts || []).map((f) => f.family), ...(meta.googleFonts || []), ...FONTS, 'Arial', 'Georgia', 'Times New Roman', 'Courier New'])];
@@ -59,43 +59,26 @@ export default function DocEditor({ id, initialDesign, initialTitle, initialVisi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ---------- saving ----------
-  const doSave = useCallback(async () => {
-    if (lockedOut.current) return;
-    if (saving.current) { again.current = true; return; }
-    saving.current = true; again.current = false;
-    setSave('saving');
-    try {
-      const html = editRef.current?.innerHTML || '';
-      const body = JSON.stringify({ design: { ...metaRef.current, html }, title: titleRef.current });
-      if (body.length > 4_300_000) { setSave('toobig'); return; }
-      const r = await fetch(`/api/designs/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body });
-      if (r.status === 404 || r.status === 403 || r.status === 401) {
-        lockedOut.current = true;
-        setLost((cur) => cur || { reason: 'removed', view: false });
-        setSave('error');
-        return;
+  // ---------- saving (retries, offline, browser backup, conflict check: see lib/saver.js) ----------
+  const saver = useSaver({
+    id,
+    version,
+    getBody: () => ({ design: { ...metaRef.current, html: editRef.current?.innerHTML || '' }, title: titleRef.current }),
+    onLocked: () => { lockedOut.current = true; setLost((cur) => cur || { reason: 'removed', view: false }); },
+    onRestore: (body) => {
+      if (body?.design) {
+        const d = normalizeDesign(body.design);
+        setMeta(d);
+        if (editRef.current) editRef.current.innerHTML = cleanHtml(body.design.html || '');
       }
-      setSave(r.ok ? 'saved' : 'error');
-    } catch {
-      setSave('error');
-    } finally {
-      saving.current = false;
-      if (again.current) doSave();
-    }
-  }, [id]);
-  const changed = useCallback(() => {
-    setSave('unsaved');
-    clearTimeout(timer.current);
-    timer.current = setTimeout(doSave, 1000);
-  }, [doSave]);
+      if (typeof body?.title === 'string') setTitle(body.title);
+    },
+  });
+  const save = saver.state;
+  const doSave = () => saver.now();
+  const changed = useCallback(() => { if (!lockedOut.current) saver.changed(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const first = useRef(true);
   useEffect(() => { if (first.current) { first.current = false; return; } changed(); }, [meta, title, changed]);
-  useEffect(() => {
-    const warn = (e) => { if (save !== 'saved' && !lockedOut.current) { e.preventDefault(); e.returnValue = ''; } };
-    window.addEventListener('beforeunload', warn);
-    return () => window.removeEventListener('beforeunload', warn);
-  }, [save]);
 
   function updateStats() {
     const el = editRef.current;
@@ -309,7 +292,7 @@ export default function DocEditor({ id, initialDesign, initialTitle, initialVisi
     await fetch(`/api/designs/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ visibility: v }) });
   }
 
-  const saveLabel = { saved: '✓ Saved', saving: 'Saving…', unsaved: 'Unsaved', error: '⚠ Save failed', toobig: '⚠ Too big (use smaller images)' }[save];
+  const saveLabel = saver.label;
   const B = ({ cmd, val, on, title: t, children }) => (
     <button className={`btn btn-sm ${on ? 'active' : ''}`} title={t} onMouseDown={keep} onClick={() => exec(cmd, val)}>{children}</button>
   );
@@ -319,7 +302,7 @@ export default function DocEditor({ id, initialDesign, initialTitle, initialVisi
       <div className="ed-top">
         <Link href="/" className="btn btn-sm" title="Home">🏠</Link>
         <input className="ed-title" value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Document title" />
-        <span className="ed-status" onClick={() => save === 'error' && doSave()}>{saveLabel}</span>
+        <span className={`ed-status save-${save}`} onClick={() => ['error', 'retrying', 'offline'].includes(save) && saver.retry()}>{saveLabel}</span>
         <div className="grow" />
         <button className="btn btn-sm" onClick={() => openAi('doc')}>✨ Write with AI</button>
         <button className="btn btn-sm" onClick={() => fileRef.current?.click()} title="Import .docx, .html, .md or .txt">📥 Import</button>
@@ -469,6 +452,7 @@ export default function DocEditor({ id, initialDesign, initialTitle, initialVisi
         </div>
       ) : null}
       <AccessLost id={id} lost={lost} />
+      {saver.notices}
       {ai ? (
         <AiHelper
           mode={ai}

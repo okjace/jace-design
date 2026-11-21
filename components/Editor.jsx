@@ -9,6 +9,7 @@ import ImageSearch from './ImageSearch';
 import ContextMenu from './ContextMenu';
 import SaveTemplate from './SaveTemplate';
 import { AccessLost, useAccessWatch } from './AccessWatch';
+import { useSaver } from './useSaver';
 import VideoPlayer from './VideoPlayer';
 import LinkPicker, { linkLabel, sectionAnchor } from './LinkPicker';
 import {
@@ -111,7 +112,7 @@ function ColorRow({ label, value, onChange, colors }) {
   );
 }
 
-export default function Editor({ id, initialDesign, initialTitle, initialVisibility, role }) {
+export default function Editor({ id, initialDesign, initialTitle, initialVisibility, role, version }) {
   const [design, setDesign] = useState(() => normalizeDesign(initialDesign));
   const designRef = useRef(design);
   const past = useRef([]);
@@ -125,7 +126,6 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
   const [panel, setPanel] = useState('templates');
   const [zoom, setZoom] = useState(0.5);
   const [autoFit, setAutoFit] = useState(true);
-  const [save, setSave] = useState('saved');
   const [modal, setModal] = useState(null); // 'share' | 'download' | 'resize' | 'present'
   const [guides, setGuides] = useState([]);
   const [busy, setBusy] = useState('');
@@ -153,7 +153,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
   }
   // If the owner removes you (or makes you view-only) while you're editing, stop saving and say so.
   const lockedOut = useRef(false);
-  const { lost, setLost } = useAccessWatch(id, role, () => { lockedOut.current = true; clearTimeout(saveTimer.current); });
+  const { lost, setLost } = useAccessWatch(id, role, () => { lockedOut.current = true; clearTimeout(saveTimer.current); saver.stop(); });
   const scrollRef = useRef(null);
   const wrapRef = useRef(null);
   const clipRef = useRef(null);
@@ -445,50 +445,28 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
   }, [id]);
   useEffect(() => () => clearTimeout(thumbTimer.current), []);
 
-  // ---------- saving ----------
-  const doSave = useCallback(async () => {
-    if (lockedOut.current) return;
-    if (saving.current) { dirty.current = true; return; }
-    saving.current = true;
-    dirty.current = false;
-    setSave('saving');
-    try {
-      const body = JSON.stringify({ design: designRef.current, title: titleRef.current });
-      if (body.length > 4_300_000) { setSave('toobig'); return; }
-      const r = await fetch(`/api/designs/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body });
-      if (r.status === 404 || r.status === 403 || r.status === 401) {
-        lockedOut.current = true;
-        setLost((cur) => cur || { reason: 'removed', view: false });
-        setSave('error');
-        return;
-      }
-      setSave(r.ok ? 'saved' : 'error');
-      if (r.ok) { clearTimeout(thumbTimer.current); thumbTimer.current = setTimeout(makeThumb, 2500); }
-    } catch {
-      setSave('error');
-    } finally {
-      saving.current = false;
-      if (dirty.current) doSave();
-    }
-  }, [id, makeThumb]);
+  // ---------- saving (retries, offline, browser backup, conflict check: see lib/saver.js) ----------
+  const saver = useSaver({
+    id,
+    version,
+    getBody: () => ({ design: designRef.current, title: titleRef.current }),
+    onLocked: () => { lockedOut.current = true; setLost((cur) => cur || { reason: 'removed', view: false }); },
+    onSaved: () => { clearTimeout(thumbTimer.current); thumbTimer.current = setTimeout(makeThumb, 2500); },
+    onRestore: (body) => {
+      if (body?.design) { const d = normalizeDesign(body.design); designRef.current = d; setDesign(d); }
+      if (typeof body?.title === 'string') setTitle(body.title);
+    },
+  });
+  const save = saver.state;
 
   const first = useRef(true);
   useEffect(() => {
     if (first.current) { first.current = false; return; }
-    setSave('unsaved');
-    clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(doSave, 900);
-  }, [design, title, doSave]);
-
-  useEffect(() => {
-    const warn = (e) => { if (save !== 'saved' && !lockedOut.current) { e.preventDefault(); e.returnValue = ''; } };
-    window.addEventListener('beforeunload', warn);
-    return () => window.removeEventListener('beforeunload', warn);
-  }, [save]);
+    if (!lockedOut.current) saver.changed();
+  }, [design, title]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function saveNow() {
-    clearTimeout(saveTimer.current);
-    await doSave();
+    await saver.now();
   }
 
   async function changeVisibility(v) {
@@ -815,7 +793,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
     : [];
   const hpos = { nw: [0, 0], n: [50, 0], ne: [100, 0], e: [100, 50], se: [100, 100], s: [50, 100], sw: [0, 100], w: [0, 50] };
   const cursor = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize' };
-  const saveLabel = { saved: '✓ Saved', saving: 'Saving…', unsaved: 'Unsaved', error: '⚠ Save failed', toobig: '⚠ Too big to save (use smaller images)' }[save];
+  const saveLabel = saver.label;
 
   return (
     <div className="editor">
@@ -826,7 +804,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
         <button className="btn btn-sm" onClick={undo} disabled={!past.current.length} title="Undo (Ctrl+Z)">↶</button>
         <button className="btn btn-sm" onClick={redo} disabled={!future.current.length} title="Redo (Ctrl+Shift+Z)">↷</button>
         <input className="ed-title" value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Design title" />
-        <span className="ed-status" title={save === 'error' ? 'Click to retry' : ''} onClick={() => save === 'error' && saveNow()}>{busy || saveLabel}</span>
+        <span className={`ed-status save-${save}`} title={save === 'error' || save === 'retrying' ? 'Click to try again now' : ''} onClick={() => (save === 'error' || save === 'retrying' || save === 'offline') && saver.retry()}>{busy || saveLabel}</span>
         <div className="grow" />
         {isSite ? <button className="btn btn-sm" onClick={async () => { await saveNow(); window.open(`/s/${id}`, '_blank'); }}>🌐 View site</button> : null}
         {isVideo
@@ -1307,6 +1285,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
         </div>
       ) : null}
       <AccessLost id={id} lost={lost} />
+      {saver.notices}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { notFound, redirect } from 'next/navigation';
 import { getUser } from '@/lib/auth';
 import { canEdit, loadDesign, recordVisit } from '@/lib/access';
+import { one } from '@/lib/db';
 import Editor from '@/components/Editor';
 import DocEditor from '@/components/DocEditor';
 import SheetEditor from '@/components/SheetEditor';
@@ -22,7 +23,9 @@ export default async function EditPage({ params }) {
   if (!design) notFound();
   if (!canEdit(role)) redirect(`/d/${id}`);
   await recordVisit(design, user, null);
-  const props = { id, initialDesign: design.data, initialTitle: design.title, initialVisibility: design.visibility, role };
+  // The exact version (with microseconds) so saves can tell if someone else saved in the meantime.
+  const ver = await one('SELECT updated_at::text AS v FROM designs WHERE id = $1', [id]);
+  const props = { id, initialDesign: design.data, initialTitle: design.title, initialVisibility: design.visibility, role, version: ver?.v || null };
   if (design.data?.kind === 'sheet') return <SheetEditor {...props} />;
   return design.data?.kind === 'doc' ? <DocEditor {...props} /> : <Editor {...props} />;
 }

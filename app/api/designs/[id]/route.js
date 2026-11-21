@@ -1,5 +1,5 @@
 import { handler, json, requireUser, getUser } from '@/lib/auth';
-import { q } from '@/lib/db';
+import { one, q } from '@/lib/db';
 import { canEdit, cleanPerms, loadDesign, shareDefaults } from '@/lib/access';
 import { normalizeDesign } from '@/lib/design';
 import { sanitizeDesign } from '@/lib/sanitize';
@@ -40,8 +40,23 @@ export const PUT = handler(async (request, { params }) => {
   if (role === 'owner' && typeof body.is_template === 'boolean') { vals.push(body.is_template); sets.push(`is_template = $${vals.length}`); }
   if (role === 'owner' && ['private', 'link', 'public'].includes(body.visibility)) { vals.push(body.visibility); sets.push(`visibility = $${vals.length}`); }
   if (!sets.length) return json({ ok: true });
-  await q(`UPDATE designs SET ${sets.join(', ')}, updated_at = NOW() WHERE id = $1`, vals);
-  return json({ ok: true });
+  // Only real edits (content or title) count as a new version; thumbnails and sharing settings don't.
+  const edit = !!body.design || typeof body.title === 'string';
+  let where = 'id = $1';
+  if (edit && typeof body.expected === 'string' && body.expected) {
+    // Someone else (or another tab) saved since this editor loaded: don't overwrite their work silently.
+    vals.push(body.expected);
+    where += ` AND updated_at = $${vals.length}::timestamptz`;
+  }
+  const rows = await q(
+    `UPDATE designs SET ${sets.join(', ')}${edit ? ', updated_at = NOW()' : ''} WHERE ${where} RETURNING updated_at::text AS v`,
+    vals
+  );
+  if (!rows.length) {
+    const cur = await one('SELECT updated_at::text AS v FROM designs WHERE id = $1', [id]);
+    return json({ error: 'conflict', updated_at: cur?.v || null }, 409);
+  }
+  return json({ ok: true, updated_at: rows[0].v });
 });
 
 export const DELETE = handler(async (_req, { params }) => {

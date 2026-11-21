@@ -498,3 +498,10 @@ h3 { font-size: 16px; margin: 0 0 8px; }
 
 /* "🔗 where this goes" label on the selected item */
 .link-badge { position: absolute; left: 0; bottom: -28px; white-space: nowrap; background: var(--brand); color: var(--on-brand); font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 99px; pointer-events: none; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+
+/* Saving */
+.ed-status.save-saving, .ed-status.save-unsaved { opacity: .7; }
+.ed-status.save-retrying, .ed-status.save-offline { color: #fbbf24; opacity: 1; cursor: pointer; }
+.ed-status.save-error, .ed-status.save-toobig, .ed-status.save-conflict, .ed-status.save-locked { color: #ff6b6b; opacity: 1; font-weight: 600; }
+.ed-status.save-error { cursor: pointer; text-decoration: underline dotted; }
+.save-notice { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 900; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; max-width: calc(100vw - 32px); padding: 10px 14px; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 10px 32px rgba(0, 0, 0, .22); font-size: 14px; }

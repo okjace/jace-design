@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ShareModal from './ShareModal';
 import SaveTemplate from './SaveTemplate';
 import { AccessLost, useAccessWatch } from './AccessWatch';
+import { useSaver } from './useSaver';
 import { addr, blankSheet, colName, display, makeEvaluator, parseAddr, parseCSV, toCSV } from '@/lib/sheet';
 import { normalizeDesign } from '@/lib/design';
 import { downloadBlob, safeName } from '@/lib/export';
@@ -13,7 +14,7 @@ const DEFAULT_W = 110;
 const SWATCH = ['#16181d', '#e40014', '#f99c00', '#fcbb00', '#1f9d5a', '#155dfc', '#7c3aed', '#ffffff'];
 const FILLS = ['', '#fef3c7', '#fee2e2', '#e2f4ea', '#dbeafe', '#ede9fe', '#f4f5f7', '#16181d'];
 
-export default function SheetEditor({ id, initialDesign, initialTitle, initialVisibility, role }) {
+export default function SheetEditor({ id, initialDesign, initialTitle, initialVisibility, role, version }) {
   const [doc, setDoc] = useState(() => normalizeDesign(initialDesign));
   const docRef = useRef(doc);
   docRef.current = doc;
@@ -25,7 +26,6 @@ export default function SheetEditor({ id, initialDesign, initialTitle, initialVi
   const [sel, setSel] = useState({ r: 0, c: 0 });
   const [anchor, setAnchor] = useState(null); // other corner of a range
   const [editing, setEditing] = useState(null); // text being edited in the selected cell
-  const [save, setSave] = useState('saved');
   const [modal, setModal] = useState(null);
   const past = useRef([]);
   const future = useRef([]);
@@ -35,7 +35,7 @@ export default function SheetEditor({ id, initialDesign, initialTitle, initialVi
   const lockedOut = useRef(false);
   const gridRef = useRef(null);
   const fileRef = useRef(null);
-  const { lost, setLost } = useAccessWatch(id, role, () => { lockedOut.current = true; clearTimeout(timer.current); });
+  const { lost, setLost } = useAccessWatch(id, role, () => { lockedOut.current = true; clearTimeout(timer.current); saver.stop(); });
 
   const sheet = doc.sheets[Math.min(si, doc.sheets.length - 1)];
   const value = useMemo(() => makeEvaluator(sheet), [sheet]);
@@ -65,36 +65,24 @@ export default function SheetEditor({ id, initialDesign, initialTitle, initialVi
   const undo = () => { if (!past.current.length) return; future.current.push(docRef.current); const d = past.current.pop(); docRef.current = d; setDoc(d); };
   const redo = () => { if (!future.current.length) return; past.current.push(docRef.current); const d = future.current.pop(); docRef.current = d; setDoc(d); };
 
-  const doSave = useCallback(async () => {
-    if (lockedOut.current) return;
-    if (saving.current) { again.current = true; return; }
-    saving.current = true; again.current = false;
-    setSave('saving');
-    try {
-      const body = JSON.stringify({ design: docRef.current, title: titleRef.current });
-      if (body.length > 4_300_000) { setSave('toobig'); return; }
-      const r = await fetch(`/api/designs/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body });
-      if ([401, 403, 404].includes(r.status)) { lockedOut.current = true; setLost((c) => c || { reason: 'removed', view: false }); setSave('error'); return; }
-      setSave(r.ok ? 'saved' : 'error');
-    } catch {
-      setSave('error');
-    } finally {
-      saving.current = false;
-      if (again.current) doSave();
-    }
-  }, [id, setLost]);
+  // Saving: retries, offline, browser backup and conflict check (see lib/saver.js).
+  const saver = useSaver({
+    id,
+    version,
+    getBody: () => ({ design: docRef.current, title: titleRef.current }),
+    onLocked: () => { lockedOut.current = true; setLost((c) => c || { reason: 'removed', view: false }); },
+    onRestore: (body) => {
+      if (body?.design) { const d = normalizeDesign(body.design); docRef.current = d; setDoc(d); }
+      if (typeof body?.title === 'string') setTitle(body.title);
+    },
+  });
+  const save = saver.state;
+  const doSave = () => saver.now();
   const first = useRef(true);
   useEffect(() => {
     if (first.current) { first.current = false; return; }
-    setSave('unsaved');
-    clearTimeout(timer.current);
-    timer.current = setTimeout(doSave, 900);
-  }, [doc, title, doSave]);
-  useEffect(() => {
-    const warn = (e) => { if (save !== 'saved' && !lockedOut.current) { e.preventDefault(); e.returnValue = ''; } };
-    window.addEventListener('beforeunload', warn);
-    return () => window.removeEventListener('beforeunload', warn);
-  }, [save]);
+    if (!lockedOut.current) saver.changed();
+  }, [doc, title]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (new URLSearchParams(location.search).get('share') === '1') setModal('share'); }, []);
 
   // ---------- selection ----------
@@ -206,7 +194,7 @@ export default function SheetEditor({ id, initialDesign, initialTitle, initialVi
     downloadBlob(new Blob([toCSV(sheet, value)], { type: 'text/csv' }), `${safeName(title)}${doc.sheets.length > 1 ? `-${safeName(sheet.name)}` : ''}.csv`);
   }
 
-  const saveLabel = { saved: '✓ Saved', saving: 'Saving…', unsaved: 'Unsaved', error: '⚠ Save failed', toobig: '⚠ Too big to save' }[save];
+  const saveLabel = saver.label;
   const shown = editing != null ? editing : selCell.v ?? '';
   const rangeLabel = range.r1 === range.r2 && range.c1 === range.c2 ? selAddr : `${addr(range.r1, range.c1)}:${addr(range.r2, range.c2)}`;
   const stats = useMemo(() => {
@@ -225,7 +213,7 @@ export default function SheetEditor({ id, initialDesign, initialTitle, initialVi
         <button className="btn btn-sm" onClick={undo} title="Undo (Ctrl+Z)">↶</button>
         <button className="btn btn-sm" onClick={redo} title="Redo (Ctrl+Y)">↷</button>
         <input className="ed-title" value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Spreadsheet title" />
-        <span className="ed-status" onClick={() => save === 'error' && doSave()}>{saveLabel}</span>
+        <span className={`ed-status save-${save}`} onClick={() => ['error', 'retrying', 'offline'].includes(save) && saver.retry()}>{saveLabel}</span>
         <div className="grow" />
         <button className="btn btn-sm" onClick={() => fileRef.current?.click()}>📥 Import CSV</button>
         <input ref={fileRef} type="file" hidden accept=".csv,.tsv,.txt,text/csv" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) importCSV(f); }} />
@@ -360,6 +348,7 @@ export default function SheetEditor({ id, initialDesign, initialTitle, initialVi
       {modal === 'share' ? <ShareModal id={id} title={title} role={role} visibility={visibility} onVisibility={async (v) => { setVisibility(v); await fetch(`/api/designs/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ visibility: v }) }); }} onClose={() => setModal(null)} /> : null}
       {modal === 'template' ? <SaveTemplate id={id} title={title} onClose={() => setModal(null)} /> : null}
       <AccessLost id={id} lost={lost} />
+      {saver.notices}
     </div>
   );
 }
