@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Avatar from './Avatar';
 
 const VIS = [
@@ -64,6 +64,17 @@ export default function ShareModal({ id, title, role, visibility, onVisibility, 
   const [guests, setGuests] = useState([]);
   const [peopleKey, setPeopleKey] = useState(0);
   const refreshPeople = () => setPeopleKey((k) => k + 1);
+
+  // Keep access requests live too, so new ones show up while the window is open.
+  useEffect(() => {
+    if (role !== 'owner') return;
+    const t = setInterval(() => {
+      if (document.hidden) return;
+      fetch(`/api/designs/${id}/requests`, { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null))
+        .then((d) => { if (d) { setRequests(d.requests || []); setGuests(d.guests || []); } }).catch(() => {});
+    }, 3000);
+    return () => clearInterval(t);
+  }, [id, role]);
   const [username, setUsername] = useState('');
   const [perms, setPerms] = useState({ ...PRESETS.view });
   const [note, setNote] = useState('');
@@ -284,15 +295,48 @@ function ago(t) {
 }
 
 // Everyone who can open (or has opened) this design, with their own permissions.
+const NO_ACCESS = { view: false, comment: false, download: false, print: false, remix: false, edit: false };
+
 function PeopleList({ id, reloadKey }) {
   const [data, setData] = useState(null);
   const [filter, setFilter] = useState('');
+  const pending = useRef(0); // changes still on their way to the server (don't let a refresh undo them)
+
+  // Load now, then keep refreshing while the window is open (and the tab is visible), so new visitors appear by themselves.
   useEffect(() => {
-    fetch(`/api/designs/${id}/people`).then((r) => r.json()).then(setData).catch(() => setData({ people: [] }));
+    let alive = true;
+    const load = () => {
+      if (pending.current || document.hidden) return;
+      fetch(`/api/designs/${id}/people`, { cache: 'no-store' })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => { if (alive && d && !pending.current) setData(d); })
+        .catch(() => {});
+    };
+    load();
+    const t = setInterval(load, 3000);
+    const onVis = () => { if (!document.hidden) load(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => { alive = false; clearInterval(t); document.removeEventListener('visibilitychange', onVis); };
   }, [id, reloadKey]);
+
+  // Apply a change on screen right away, then confirm with the server.
   async function patch(body) {
-    const r = await fetch(`/api/designs/${id}/people`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    if (r.ok) setData(await r.json());
+    setData((d) => d && {
+      ...d,
+      people: d.people.map((p) => {
+        if (p.key !== body.key) return p;
+        if (body.action === 'block') return { ...p, status: 'blocked', custom: true, perms: NO_ACCESS, effective: NO_ACCESS };
+        if (body.action === 'reset') return { ...p, status: 'link', custom: false, perms: null, effective: d.link_open ? d.link_perms : NO_ACCESS };
+        return { ...p, status: p.kind === 'guest' ? 'approved' : 'added', custom: true, perms: body.perms, effective: body.perms };
+      }),
+    });
+    pending.current++;
+    try {
+      const r = await fetch(`/api/designs/${id}/people`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (r.ok) { const d = await r.json(); if (pending.current === 1) setData(d); }
+    } finally {
+      pending.current--;
+    }
   }
   if (!data) return <div className="small muted" style={{ marginTop: 12 }}>Loading people…</div>;
   const list = (data.people || []).filter((p) => !filter || `${p.name} ${p.username || ''}`.toLowerCase().includes(filter.toLowerCase()));
