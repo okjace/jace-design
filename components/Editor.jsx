@@ -13,7 +13,7 @@ import {
   scalePage, shapeEl, textEl, textFont, textHeight, uid, wrapText,
 } from '@/lib/design';
 import { TEMPLATES, templateDesign } from '@/lib/templates';
-import { ensureFonts, exportImage, exportJson, exportPdf, exportSvg, fileToDataUrl } from '@/lib/export';
+import { ensureFonts, exportImage, exportJson, exportPdf, exportSvg, fileToDataUrl, renderPageToCanvas } from '@/lib/export';
 import { fontFileToDataUrl, loadFontFile, loadGoogleFont, registerFonts } from '@/lib/fonts';
 import { aiToPages, aiToPalette, extractJson, fillAiImages, stripFences } from '@/lib/ai';
 
@@ -380,6 +380,24 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
     return () => ro.disconnect();
   }, [autoFit, fit]);
 
+  // ---------- thumbnail (small preview image used in lists) ----------
+  const thumbTimer = useRef(null);
+  const thumbFor = useRef(null);
+  const makeThumb = useCallback(async () => {
+    const d = designRef.current;
+    if (thumbFor.current === d || !d.pages?.[0]) return;
+    thumbFor.current = d;
+    try {
+      const s = Math.min(1, 480 / Math.max(d.width, d.height));
+      const canvas = await renderPageToCanvas(d, d.pages[0], s);
+      const thumb = canvas.toDataURL('image/webp', 0.8);
+      await fetch(`/api/designs/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ thumb }) });
+    } catch {
+      thumbFor.current = null;
+    }
+  }, [id]);
+  useEffect(() => () => clearTimeout(thumbTimer.current), []);
+
   // ---------- saving ----------
   const doSave = useCallback(async () => {
     if (saving.current) { dirty.current = true; return; }
@@ -391,13 +409,14 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
       if (body.length > 4_300_000) { setSave('toobig'); return; }
       const r = await fetch(`/api/designs/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body });
       setSave(r.ok ? 'saved' : 'error');
+      if (r.ok) { clearTimeout(thumbTimer.current); thumbTimer.current = setTimeout(makeThumb, 2500); }
     } catch {
       setSave('error');
     } finally {
       saving.current = false;
       if (dirty.current) doSave();
     }
-  }, [id]);
+  }, [id, makeThumb]);
 
   const first = useRef(true);
   useEffect(() => {
@@ -1089,6 +1108,7 @@ function UserTemplates({ onPick }) {
   const [list, setList] = useState(null);
   useEffect(() => {
     setList(null);
+    // Documents never get a picture thumbnail, so anything without data.kind === 'doc' is a design.
     fetch(`/api/templates?scope=${scope}`).then((r) => r.json()).then((d) => setList((d.templates || []).filter((t) => t.data?.kind !== 'doc'))).catch(() => setList([]));
   }, [scope]);
   return (
@@ -1102,8 +1122,15 @@ function UserTemplates({ onPick }) {
       ) : (
         <div className="tile-grid cols-2" style={{ marginTop: 8 }}>
           {list.map((t) => (
-            <button key={t.id} className="tpl" onClick={() => onPick(t.data)} title={`${t.title}${scope === 'community' ? ` by @${t.username}` : ''}`}>
-              <DesignPage design={t.data} page={t.data.pages[0]} width="100%" uidPrefix={`ut-${t.id}-`} />
+            <button key={t.id} className="tpl" title={`${t.title}${scope === 'community' ? ` by @${t.username}` : ''}`}
+              onClick={async () => {
+                const r = await fetch(`/api/designs/${t.id}`);
+                const d = await r.json().catch(() => ({}));
+                if (r.ok && d.design?.data?.pages) onPick(d.design.data);
+              }}>
+              {t.thumb
+                ? <img src={t.thumb} alt="" loading="lazy" style={{ width: '100%', display: 'block' }} />
+                : t.data?.pages ? <DesignPage design={t.data} page={t.data.pages[0]} width="100%" uidPrefix={`ut-${t.id}-`} /> : null}
               <span>{t.title}</span>
             </button>
           ))}

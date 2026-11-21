@@ -25,7 +25,15 @@ export default function UserMenu({ user }) {
           <Link href={`/u/${encodeURIComponent(user.username)}`}>Your profile</Link>
           <Link href="/">Your designs</Link>
           <Link href="/settings">Settings</Link>
-          <form action="/api/auth/logout" method="post"><button type="submit">Sign out</button></form>
+          <button
+            type="button"
+            onClick={async (e) => {
+              e.stopPropagation();
+              e.currentTarget.textContent = 'Signing out…';
+              await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
+              location.href = '/';
+            }}
+          >Sign out</button>
         </div>
       ) : null}
     </div>

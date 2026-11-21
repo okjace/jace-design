@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { getUser } from '@/lib/auth';
 import { GOOGLE_FONTS_HREF } from '@/lib/design';
 import UserMenu from '@/components/UserMenu';
+import FontLoader from '@/components/FontLoader';
 
 export const metadata = {
   title: { default: 'Jace Design', template: '%s · Jace Design' },
@@ -16,10 +17,13 @@ export default async function RootLayout({ children }) {
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
-        <link rel="stylesheet" href={GOOGLE_FONTS_HREF} />
+        {/* Only the UI font blocks the first paint; the design fonts load in the background. */}
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono&display=swap" />
+        <link rel="preload" as="style" href={GOOGLE_FONTS_HREF} />
         <link rel="icon" href="/icon.svg" type="image/svg+xml" />
       </head>
       <body>
+        <FontLoader href={GOOGLE_FONTS_HREF} />
         <header className="topnav">
           <Link href="/" className="brand">
             <img src="/icon.svg" alt="" width="28" height="28" />

@@ -5,7 +5,14 @@ import { useState } from 'react';
 import DesignPage from './DesignPage';
 import Avatar from './Avatar';
 
-export function Thumb({ data, uid }) {
+export function Thumb({ data, uid, thumb }) {
+  if (thumb) {
+    return (
+      <div className="thumb">
+        <img src={thumb} alt="" loading="lazy" decoding="async" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', boxShadow: '0 2px 6px rgba(0,0,0,.14)' }} />
+      </div>
+    );
+  }
   if (typeof data === 'string') { try { data = JSON.parse(data); } catch { data = null; } }
   if (data?.kind === 'doc') {
     const s = 190 / (data.width || 816);
@@ -56,7 +63,7 @@ export default function DesignCard({ d, mine, author, href }) {
 
   return (
     <div className="dcard" style={busy ? { opacity: 0.5 } : undefined}>
-      <Link href={target}><Thumb data={d.data} uid={d.id} /></Link>
+      <Link href={target}><Thumb data={d.data} uid={d.id} thumb={d.thumb} /></Link>
       {mine ? (
         <div className="dcard-menu row">
           <button className="btn btn-sm" title="Rename" onClick={() => act('rename')}>✏️</button>

@@ -29,6 +29,10 @@ export const PUT = handler(async (request, { params }) => {
     vals.push(d.width); sets.push(`width = $${vals.length}`);
     vals.push(d.height); sets.push(`height = $${vals.length}`);
   }
+  // A small preview image made in the browser (shown in lists instead of the whole design).
+  if (typeof body.thumb === 'string' && /^data:image\/(jpeg|webp|png);base64,[A-Za-z0-9+/=]+$/.test(body.thumb) && body.thumb.length < 400_000) {
+    vals.push(body.thumb); sets.push(`thumb = $${vals.length}`);
+  }
   if (typeof body.title === 'string') { vals.push(body.title.slice(0, 120) || 'Untitled design'); sets.push(`title = $${vals.length}`); }
   if (role === 'owner' && body.link_perms && typeof body.link_perms === 'object') { vals.push(JSON.stringify(cleanPerms(body.link_perms))); sets.push(`link_perms = $${vals.length}::text::jsonb`); }
   if (role === 'owner' && typeof body.require_request === 'boolean') { vals.push(body.require_request); sets.push(`require_request = $${vals.length}`); }

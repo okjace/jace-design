@@ -5,6 +5,7 @@ import { one, q } from '@/lib/db';
 import Avatar from '@/components/Avatar';
 import DesignCard from '@/components/DesignCard';
 import FollowButton from '@/components/FollowButton';
+import { lighten, listCols } from '@/lib/preview';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,22 +27,26 @@ export default async function Profile({ params, searchParams }) {
   if (!u) notFound();
   const me = await getUser();
   const isMe = me?.id === u.id;
-  const stats = await one(
-    `SELECT (SELECT COUNT(*)::int FROM follows WHERE following_id = $1) AS followers,
-            (SELECT COUNT(*)::int FROM follows WHERE follower_id = $1) AS following,
-            (SELECT COUNT(*)::int FROM designs WHERE owner_id = $1 AND visibility = 'public' AND NOT is_template) AS designs,
-            (SELECT COUNT(*)::int FROM likes l JOIN designs d ON d.id = l.design_id WHERE d.owner_id = $1) AS likes`,
-    [u.id]
-  );
-  const following = me && !isMe ? !!(await one('SELECT 1 AS x FROM follows WHERE follower_id = $1 AND following_id = $2', [me.id, u.id])) : false;
-  const designs = tab === 'designs'
-    ? await q(
-      `SELECT d.id, d.title, d.width, d.height, d.data, d.visibility, (SELECT COUNT(*)::int FROM likes l WHERE l.design_id = d.id) AS likes
-       FROM designs d WHERE d.owner_id = $1 AND d.visibility = 'public' AND NOT d.is_template ORDER BY d.created_at DESC LIMIT 120`, [u.id])
-    : await q(
-      `SELECT d.id, d.title, d.width, d.height, d.data, o.username, o.name, o.picture, (SELECT COUNT(*)::int FROM likes x WHERE x.design_id = d.id) AS likes
-       FROM likes l JOIN designs d ON d.id = l.design_id JOIN users o ON o.id = d.owner_id
-       WHERE l.user_id = $1 AND d.visibility = 'public' AND NOT d.is_template ORDER BY l.created_at DESC LIMIT 120`, [u.id]);
+  const [stats, followRow, designs] = await Promise.all([
+    one(
+      `SELECT (SELECT COUNT(*)::int FROM follows WHERE following_id = $1) AS followers,
+              (SELECT COUNT(*)::int FROM follows WHERE follower_id = $1) AS following,
+              (SELECT COUNT(*)::int FROM designs WHERE owner_id = $1 AND visibility = 'public' AND NOT is_template) AS designs,
+              (SELECT COUNT(*)::int FROM likes l JOIN designs d ON d.id = l.design_id WHERE d.owner_id = $1) AS likes`,
+      [u.id]
+    ),
+    me && !isMe ? one('SELECT 1 AS x FROM follows WHERE follower_id = $1 AND following_id = $2', [me.id, u.id]) : null,
+    (tab === 'designs'
+      ? q(
+        `SELECT d.id, d.title, d.width, d.height, ${listCols('d')}, d.visibility, (SELECT COUNT(*)::int FROM likes l WHERE l.design_id = d.id) AS likes
+         FROM designs d WHERE d.owner_id = $1 AND d.visibility = 'public' AND NOT d.is_template ORDER BY d.created_at DESC LIMIT 120`, [u.id])
+      : q(
+        `SELECT d.id, d.title, d.width, d.height, ${listCols('d')}, o.username, o.name, o.picture, (SELECT COUNT(*)::int FROM likes x WHERE x.design_id = d.id) AS likes
+         FROM likes l JOIN designs d ON d.id = l.design_id JOIN users o ON o.id = d.owner_id
+         WHERE l.user_id = $1 AND d.visibility = 'public' AND NOT d.is_template ORDER BY l.created_at DESC LIMIT 120`, [u.id])
+    ).then(lighten),
+  ]);
+  const following = !!followRow;
 
   return (
     <main className="page">

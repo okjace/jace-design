@@ -312,7 +312,7 @@ export default function CreateHub() {
               <div className="grid">
                 {userTpls.map((t) => (
                   <button key={t.id} className="dcard" style={{ border: 0, background: 'none', padding: 0, cursor: 'pointer', textAlign: 'left' }} onClick={() => openUserTemplate(t)}>
-                    <Thumb data={t.data} uid={`u${t.id}`} />
+                    <Thumb data={t.data} uid={`u${t.id}`} thumb={t.thumb} />
                     <span className="dcard-title">{t.title}</span>
                     <span className="dcard-meta">{t.category || (t.data?.kind === 'doc' ? 'Document' : `${t.width} × ${t.height}`)}{tplScope === 'community' ? ` · @${t.username}` : ''}{t.uses ? ` · used ${t.uses}×` : ''}</span>
                   </button>

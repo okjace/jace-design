@@ -46,15 +46,18 @@ export default async function ViewPage({ params }) {
     );
   }
 
-  if (role !== 'owner') await q('UPDATE designs SET views = views + 1 WHERE id = $1', [id]).catch(() => {});
-  const likes = await one('SELECT COUNT(*)::int AS n FROM likes WHERE design_id = $1', [id]);
-  const liked = user ? !!(await one('SELECT 1 AS x FROM likes WHERE design_id = $1 AND user_id = $2', [id, user.id])) : false;
-  const comments = await q(
-    `SELECT c.id, c.body, c.created_at, c.guest_name, u.username, u.name, u.picture FROM comments c LEFT JOIN users u ON u.id = c.user_id
-     WHERE c.design_id = $1 ORDER BY c.created_at ASC LIMIT 300`, [id]);
-  const remixOf = design.remix_of ? await one(
-    `SELECT d.id, d.title, u.username FROM designs d JOIN users u ON u.id = d.owner_id WHERE d.id = $1 AND d.visibility <> 'private'`, [design.remix_of]) : null;
-  const remixes = await one('SELECT COUNT(*)::int AS n FROM designs WHERE remix_of = $1', [id]);
+  const [, likes, likedRow, comments, remixOf, remixes] = await Promise.all([
+    role !== 'owner' ? q('UPDATE designs SET views = views + 1 WHERE id = $1', [id]).catch(() => {}) : null,
+    one('SELECT COUNT(*)::int AS n FROM likes WHERE design_id = $1', [id]),
+    user ? one('SELECT 1 AS x FROM likes WHERE design_id = $1 AND user_id = $2', [id, user.id]) : null,
+    q(`SELECT c.id, c.body, c.created_at, c.guest_name, u.username, u.name, u.picture FROM comments c LEFT JOIN users u ON u.id = c.user_id
+       WHERE c.design_id = $1 ORDER BY c.created_at ASC LIMIT 300`, [id]),
+    design.remix_of
+      ? one(`SELECT d.id, d.title, u.username FROM designs d JOIN users u ON u.id = d.owner_id WHERE d.id = $1 AND d.visibility <> 'private'`, [design.remix_of])
+      : null,
+    one('SELECT COUNT(*)::int AS n FROM designs WHERE remix_of = $1', [id]),
+  ]);
+  const liked = !!likedRow;
   const owner = { username: design.owner_username, name: design.owner_name, picture: design.owner_picture };
   const isDoc = design.data?.kind === 'doc';
 

@@ -1,6 +1,7 @@
 import { handler, json, newId, requireUser, getUser } from '@/lib/auth';
 import { q } from '@/lib/db';
 import { canEdit, loadDesign } from '@/lib/access';
+import { lighten, listCols } from '@/lib/preview';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,16 +13,16 @@ export const GET = handler(async (request) => {
   const user = await getUser();
   if (scope === 'mine' && !user) return json({ templates: [] });
   const rows = scope === 'mine'
-    ? await q(`SELECT d.id, d.title, d.width, d.height, d.data, d.visibility, d.category, u.username, u.name, u.picture
+    ? await q(`SELECT d.id, d.title, d.width, d.height, ${listCols('d')}, d.visibility, d.category, u.username, u.name, u.picture
                FROM designs d JOIN users u ON u.id = d.owner_id
                WHERE d.is_template AND d.owner_id = $1 AND ($2 = '' OR d.title ILIKE '%' || $2 || '%')
                ORDER BY d.updated_at DESC LIMIT 100`, [user.id, term])
-    : await q(`SELECT d.id, d.title, d.width, d.height, d.data, d.visibility, d.category, u.username, u.name, u.picture,
+    : await q(`SELECT d.id, d.title, d.width, d.height, ${listCols('d')}, d.visibility, d.category, u.username, u.name, u.picture,
                       (SELECT COUNT(*)::int FROM designs r WHERE r.remix_of = d.id) AS uses
                FROM designs d JOIN users u ON u.id = d.owner_id
                WHERE d.is_template AND d.visibility = 'public' AND ($1 = '' OR d.title ILIKE '%' || $1 || '%' OR d.category ILIKE '%' || $1 || '%')
                ORDER BY uses DESC, d.created_at DESC LIMIT 100`, [term]);
-  return json({ templates: rows });
+  return json({ templates: lighten(rows) });
 });
 
 // POST /api/templates { from, title, category, visibility } — save a snapshot of a design as a template.

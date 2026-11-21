@@ -3,6 +3,7 @@ import { getUser } from '@/lib/auth';
 import { q } from '@/lib/db';
 import DesignCard from '@/components/DesignCard';
 import DesignSearch from '@/components/DesignSearch';
+import { lighten, listCols } from '@/lib/preview';
 
 export const dynamic = 'force-dynamic';
 export const metadata = { title: 'Explore' };
@@ -19,15 +20,17 @@ export default async function Explore({ searchParams }) {
     where += ` AND d.owner_id IN (SELECT following_id FROM follows WHERE follower_id = $2)`;
   }
   const order = sort === 'popular' ? 'likes DESC, d.created_at DESC' : 'd.created_at DESC';
-  const rows = await q(
-    `SELECT d.id, d.title, d.width, d.height, d.data, u.username, u.name, u.picture,
-            (SELECT COUNT(*)::int FROM likes l WHERE l.design_id = d.id) AS likes
-     FROM designs d JOIN users u ON u.id = d.owner_id WHERE ${where} ORDER BY ${order} LIMIT 96`,
-    params
-  );
-  const people = term
-    ? await q(`SELECT username, name, picture FROM users WHERE username ILIKE '%' || $1 || '%' OR name ILIKE '%' || $1 || '%' LIMIT 8`, [term])
-    : [];
+  const [rows, people] = await Promise.all([
+    q(
+      `SELECT d.id, d.title, d.width, d.height, ${listCols('d')}, u.username, u.name, u.picture,
+              (SELECT COUNT(*)::int FROM likes l WHERE l.design_id = d.id) AS likes
+       FROM designs d JOIN users u ON u.id = d.owner_id WHERE ${where} ORDER BY ${order} LIMIT 96`,
+      params
+    ).then(lighten),
+    term
+      ? q(`SELECT username, name, picture FROM users WHERE username ILIKE '%' || $1 || '%' OR name ILIKE '%' || $1 || '%' LIMIT 8`, [term])
+      : [],
+  ]);
   const link = (s) => `/explore?sort=${s}${term ? `&q=${encodeURIComponent(term)}` : ''}`;
   return (
     <main className="page">

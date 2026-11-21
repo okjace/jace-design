@@ -6,6 +6,7 @@ import { PRESET_GROUPS } from '@/lib/design';
 import DesignCard from '@/components/DesignCard';
 import QuickCreate from '@/components/QuickCreate';
 import DesignSearch from '@/components/DesignSearch';
+import { lighten, listCols } from '@/lib/preview';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,12 +24,12 @@ export default async function Home({ searchParams }) {
   const error = sp?.error ? ERRORS[sp.error] || `Sign-in error: ${sp.error}` : null;
 
   if (!user) {
-    const trending = await q(
-      `SELECT d.id, d.title, d.width, d.height, d.data, u.username, u.name, u.picture,
+    const trending = lighten(await q(
+      `SELECT d.id, d.title, d.width, d.height, ${listCols('d')}, u.username, u.name, u.picture,
               (SELECT COUNT(*)::int FROM likes l WHERE l.design_id = d.id) AS likes
        FROM designs d JOIN users u ON u.id = d.owner_id WHERE d.visibility = 'public' AND NOT d.is_template
        ORDER BY likes DESC, d.created_at DESC LIMIT 8`
-    ).catch(() => []);
+    ).catch(() => []));
     return (
       <main className="page">
         {error ? <div className="notice err">{error}</div> : null}
@@ -73,19 +74,21 @@ export default async function Home({ searchParams }) {
   }
 
   const term = typeof sp?.q === 'string' ? sp.q.trim() : '';
-  const all = await q(
-    `SELECT id, title, width, height, data, visibility, is_template, updated_at FROM designs
-     WHERE owner_id = $1 AND ($2 = '' OR title ILIKE '%' || $2 || '%') ORDER BY updated_at DESC LIMIT 160`,
-    [user.id, term]
-  );
+  const [all, shared] = await Promise.all([
+    q(
+      `SELECT d.id, d.title, d.width, d.height, ${listCols('d')}, d.visibility, d.is_template, d.updated_at FROM designs d
+       WHERE d.owner_id = $1 AND ($2 = '' OR d.title ILIKE '%' || $2 || '%') ORDER BY d.updated_at DESC LIMIT 160`,
+      [user.id, term]
+    ).then(lighten),
+    q(
+      `SELECT d.id, d.title, d.width, d.height, ${listCols('d')}, s.role, s.perms, u.username, u.name, u.picture
+       FROM shares s JOIN designs d ON d.id = s.design_id JOIN users u ON u.id = d.owner_id
+       WHERE s.user_id = $1 ORDER BY s.created_at DESC LIMIT 60`,
+      [user.id]
+    ).then(lighten),
+  ]);
   const mine = all.filter((d) => !d.is_template);
   const templates = all.filter((d) => d.is_template);
-  const shared = await q(
-    `SELECT d.id, d.title, d.width, d.height, d.data, s.role, s.perms, u.username, u.name, u.picture
-     FROM shares s JOIN designs d ON d.id = s.design_id JOIN users u ON u.id = d.owner_id
-     WHERE s.user_id = $1 ORDER BY s.created_at DESC LIMIT 60`,
-    [user.id]
-  );
   const allPresets = PRESET_GROUPS.flatMap((g) => g.items);
   const quick = ['Instagram post', 'Presentation 16:9', 'YouTube thumbnail', 'Poster (18×24 in)', 'Document (A4)', 'Business card']
     .map((n) => allPresets.find((p) => p.name === n)).filter(Boolean);
