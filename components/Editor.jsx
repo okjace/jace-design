@@ -7,6 +7,7 @@ import ShareModal from './ShareModal';
 import AiHelper from './AiHelper';
 import ImageSearch from './ImageSearch';
 import PhotoLibrary from './PhotoLibrary';
+import AppsPanel from './AppsPanel';
 import ContextMenu from './ContextMenu';
 import SaveTemplate from './SaveTemplate';
 import { AccessLost, useAccessWatch } from './AccessWatch';
@@ -67,6 +68,7 @@ const RAIL = [
   ['uploads', '☁️', 'Uploads'],
   ['background', '🎨', 'Background'],
   ['brand', '💼', 'Brand'],
+  ['apps', '🧰', 'Apps'],
   ['layers', '📚', 'Layers'],
 ];
 
@@ -422,6 +424,46 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
     }
   }
 
+  // Recolor this page: map its colors (most used first) onto a new palette.
+  function recolor(list) {
+    const used = designColors({ pages: [page] });
+    const map = new Map(used.map((c, i) => [c, list[i % list.length]]));
+    const sw = (c) => (typeof c === 'string' && map.has(c.toLowerCase()) ? map.get(c.toLowerCase()) : c);
+    commit((d) => mapPage(d, (p) => ({
+      ...p,
+      background: { ...p.background, color: sw(p.background?.color), from: sw(p.background?.from), to: sw(p.background?.to) },
+      elements: p.elements.map((e) => ({ ...e, color: sw(e.color), fill: sw(e.fill), gradient: sw(e.gradient), stroke: sw(e.stroke), bgColor: sw(e.bgColor) })),
+    })));
+  }
+
+  // What apps (built-in and community, see components/AppsPanel.jsx) are allowed to do.
+  const appApi = {
+    W, H, k, sel, kind: design.kind || 'design',
+    addEl: (el, opts) => addEl(el, opts),
+    updateSel: (patch) => updateSel(patch),
+    addImage: (src, w, h) => {
+      commit((d) => ({ ...d, assets: [{ id: uid(), src, width: Math.round(w), height: Math.round(h) }, ...(d.assets || [])] }), { history: false });
+      addEl(imageEl({ src, w, h }));
+    },
+    addElements: async (els, fonts = []) => {
+      if (fonts.length) {
+        await Promise.all(fonts.map((f) => loadGoogleFont(f)));
+        commit((d) => ({ ...d, googleFonts: [...new Set([...(d.googleFonts || []), ...fonts])] }), { history: false });
+      }
+      const [filled] = await fillAiImages([{ id: 'app', background: { type: 'none' }, elements: els }], setBusy);
+      setBusy('');
+      const list = filled.elements.map(fixEl);
+      commit((d) => mapPage(d, (p) => ({ ...p, elements: [...p.elements, ...list] })));
+      selectIds(list.map((x) => x.id));
+      list.forEach((e) => e.type === 'text' && loadFont(e));
+    },
+    recolor,
+    setBg,
+    openMockups: () => setModal('mockups'),
+    removeBg: () => (sel?.type === 'image' && !sel.icon ? removeBackground(sel) : alert('Select a photo on the page first, then open the Background remover.')),
+    panel: (name) => setPanel(name),
+  };
+
   // ---------- AI ----------
   async function applyAi(reply, _idea, progress) {
     if (ai === 'text') {
@@ -431,16 +473,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
       return;
     }
     if (ai === 'palette') {
-      const list = aiToPalette(extractJson(reply));
-      // Recolor the page: map its colors (most used first) onto the new palette.
-      const used = designColors({ pages: [page] });
-      const map = new Map(used.map((c, i) => [c, list[i % list.length]]));
-      const sw = (c) => (typeof c === 'string' && map.has(c.toLowerCase()) ? map.get(c.toLowerCase()) : c);
-      commit((d) => mapPage(d, (p) => ({
-        ...p,
-        background: { ...p.background, color: sw(p.background?.color), from: sw(p.background?.from), to: sw(p.background?.to) },
-        elements: p.elements.map((e) => ({ ...e, color: sw(e.color), fill: sw(e.fill), gradient: sw(e.gradient), stroke: sw(e.stroke), bgColor: sw(e.bgColor) })),
-      })));
+      recolor(aiToPalette(extractJson(reply)));
       return;
     }
     let pages = aiToPages(extractJson(reply), W, H);
@@ -1240,6 +1273,8 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
               ) : <ImageSearch onPick={pickPhoto} />}
             </>
           ) : null}
+
+          {panel === 'apps' ? <AppsPanel api={appApi} /> : null}
 
           {panel === 'icons' ? (
             <IconSearch color={design.textDefaults?.color || '#16181d'} onPick={(ic) => addEl(imageEl({ src: ic.src, icon: ic.icon, iconColor: ic.iconColor, w: 260 * k, h: 260 * k, fit: 'contain' }))} />
