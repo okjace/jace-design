@@ -10,6 +10,7 @@ import ContextMenu from './ContextMenu';
 import SaveTemplate from './SaveTemplate';
 import { AccessLost, useAccessWatch } from './AccessWatch';
 import { useSaver } from './useSaver';
+import { mergeDesigns } from '@/lib/merge';
 import VideoPlayer from './VideoPlayer';
 import LinkPicker, { linkLabel, sectionAnchor } from './LinkPicker';
 import IconSearch, { iconDataUrl } from './IconSearch';
@@ -153,9 +154,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
   const [pen, setPen] = useState(null); // { color, width } while the pen is on
   const [stroke, setStroke] = useState(null); // the line being drawn right now
   const [brand, saveBrand] = useBrand();
-  const [live, setLive] = useState(false); // live cursors (off unless you turn it on)
-  useEffect(() => { try { setLive(localStorage.getItem('jd_live') === '1'); } catch {} }, []);
-  const toggleLive = () => setLive((v) => { try { localStorage.setItem('jd_live', v ? '0' : '1'); } catch {} return !v; });
+  const live = true; // always in sync: others' cursors and saved changes show up by themselves
   const posRef = useRef(null); // your cursor, in design units (for live cursors)
   const selRef = useRef(null);
   const remoteRef = useRef(false); // true while loading someone else's saved changes (don't save them back)
@@ -185,6 +184,8 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
   const dirty = useRef(false);
   const titleRef = useRef(title);
   titleRef.current = title;
+  const baseRef = useRef(design); // what the server has, as far as we know (for merging others' changes)
+  const baseTitleRef = useRef(initialTitle);
 
   const W = design.width;
   const H = design.height;
@@ -537,6 +538,21 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
     id,
     version,
     getBody: () => ({ design: designRef.current, title: titleRef.current }),
+    onSent: (sent) => { baseRef.current = sent.design; baseTitleRef.current = sent.title; },
+    merge: (theirData, theirTitle) => {
+      // Someone saved while we were editing: keep both people's changes (see lib/merge.js).
+      const theirs = normalizeDesign(theirData);
+      const merged = mergeDesigns(baseRef.current, designRef.current, theirs);
+      const next = { ...merged, pages: merged.pages.map((p) => ({ ...p, elements: p.elements.map(fixEl) })) };
+      baseRef.current = theirs;
+      designRef.current = next;
+      setDesign(next);
+      if (typeof theirTitle === 'string') {
+        if (titleRef.current === baseTitleRef.current) setTitle(theirTitle);
+        baseTitleRef.current = theirTitle;
+      }
+      registerFonts(next).catch(() => {});
+    },
     onLocked: () => { lockedOut.current = true; setLost((cur) => cur || { reason: 'removed', view: false }); },
     onSaved: () => { clearTimeout(thumbTimer.current); thumbTimer.current = setTimeout(makeThumb, 2500); },
     onRestore: (body) => {
@@ -563,6 +579,8 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
     onRemote: (data, newTitle, v) => {
       remoteRef.current = true;
       const d = normalizeDesign(data);
+      baseRef.current = d;
+      if (typeof newTitle === 'string') baseTitleRef.current = newTitle;
       const next = { ...d, pages: d.pages.map((p) => ({ ...p, elements: p.elements.map(fixEl) })) };
       designRef.current = next;
       setDesign(next);
@@ -1095,10 +1113,6 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
         <input className="ed-title" value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Design title" />
         <span className={`ed-status save-${save}`} title={save === 'error' || save === 'retrying' ? 'Click to try again now' : ''} onClick={() => (save === 'error' || save === 'retrying' || save === 'offline') && saver.retry()}>{busy || saveLabel}</span>
         <div className="grow" />
-        <button className={`btn btn-sm ${live ? 'active' : ''}`} onClick={toggleLive}
-          title={live ? 'Live is on: you see the cursors of others who have it on, and their changes appear as they save. Click to turn off.' : 'Turn on live cursors and live updates'}>
-          👥 Live{live ? ' on' : ''}
-        </button>
         {live && people.length ? (
           <div className="live-faces">
             {people.slice(0, 5).map((p) => <span key={p.sess} title={`${p.name}${p.page !== pi ? ` (page ${p.page + 1})` : ''}`} style={{ background: p.color }}>{(p.name || '?').slice(0, 1).toUpperCase()}</span>)}
