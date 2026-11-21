@@ -12,8 +12,10 @@ const sessId = () => {
 };
 
 /**
- * Live mode for the design editor (only while `on`): shares your cursor, shows everyone else's who also
- * has Live on, and pulls in their saved changes whenever you have nothing unsaved yourself.
+ * Live updates for the design editor. Nothing is sent or redrawn unless something changed:
+ *  - your cursor/selection is sent only when it moves (at most ~3 times a second), plus a check-in every 20 s;
+ *  - a quick read-only check (every 2 s while others are here, every 5 s when you're alone) says whether
+ *    anyone moved or saved; the editor only updates when the answer is different.
  * posRef.current = { x, y } in design units (or null); selRef.current = selected element id.
  */
 export function useLive({ id, on, page, posRef, selRef, saver, onRemote }) {
@@ -25,42 +27,66 @@ export function useLive({ id, on, page, posRef, selRef, saver, onRemote }) {
   useEffect(() => {
     if (!on) { setPeople([]); return undefined; }
     const sess = sessId();
-    let stop = false, timer = 0, last = '', lastSent = 0, pulling = false;
-    const tick = async () => {
-      if (stop) return;
-      const { page: pg, saver: sv } = state.current;
-      const pos = posRef.current;
-      const body = { sess, page: pg, x: pos ? Math.round(pos.x) : null, y: pos ? Math.round(pos.y) : null, sel: selRef.current || null };
-      const sig = JSON.stringify(body);
-      const now = Date.now();
-      // Send when something moved (up to ~4 times a second), otherwise a heartbeat every 1.2 s.
-      if (!document.hidden && (sig !== last || now - lastSent > 1200)) {
-        last = sig; lastSent = now;
+    let stop = false, moveTimer = 0, checkTimer = 0, lastSent = '', lastSentAt = 0, lastPeople = '[]', pulling = false, alone = true;
+
+    // Apply an answer from the server, but only touch the editor if something is different.
+    const apply = async (d) => {
+      if (stop || !d) return;
+      const ppl = JSON.stringify(d.people || []);
+      if (ppl !== lastPeople) { lastPeople = ppl; setPeople(d.people || []); }
+      alone = !(d.people || []).length;
+      if (d.color) setColor((c) => (c === d.color ? c : d.color));
+      const sv = state.current.saver;
+      // Someone saved: if we have nothing unsaved, load their version (if we do, saving merges it in).
+      if (d.version && sv && d.version !== sv.version() && !sv.hasUnsaved() && sv.state === 'saved' && !pulling) {
+        pulling = true;
         try {
-          const r = await fetch(`/api/designs/${id}/presence`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: sig });
-          if (r.ok) {
-            const d = await r.json();
-            if (!stop) { setPeople(d.people || []); setColor(d.color || ''); }
-            // Someone saved a newer version: if we have nothing unsaved, load it.
-            if (d.version && sv && d.version !== sv.version() && !sv.hasUnsaved() && sv.state === 'saved' && !pulling) {
-              pulling = true;
-              try {
-                const g = await fetch(`/api/designs/${id}`);
-                const j = await g.json();
-                if (g.ok && j.design && !stop && !sv.hasUnsaved()) state.current.onRemote?.(j.design.data, j.design.title, j.version || d.version);
-              } catch {} finally { pulling = false; }
-            }
-          }
+          const g = await fetch(`/api/designs/${id}`, { cache: 'no-store' });
+          const j = await g.json();
+          if (g.ok && j.design && !stop && !sv.hasUnsaved()) state.current.onRemote?.(j.design.data, j.design.title, j.version || d.version);
+        } catch {} finally { pulling = false; }
+      }
+    };
+
+    const post = async (body) => {
+      try {
+        const r = await fetch(`/api/designs/${id}/presence`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        if (r.ok) await apply(await r.json());
+      } catch {}
+    };
+
+    // Your cursor: only sent when it changed.
+    const watchMoves = () => {
+      if (stop) return;
+      if (!document.hidden) {
+      const pos = posRef.current;
+        const body = { sess, page: state.current.page, x: pos ? Math.round(pos.x) : null, y: pos ? Math.round(pos.y) : null, sel: selRef.current || null };
+        const sig = JSON.stringify(body);
+        const now = Date.now();
+        if (sig !== lastSent || now - lastSentAt > 20_000) { lastSent = sig; lastSentAt = now; post(body); }
+      }
+      moveTimer = setTimeout(watchMoves, 300);
+    };
+
+    // Others: a cheap read, more often only when someone else is here.
+    const check = async () => {
+      if (stop) return;
+      if (!document.hidden && Date.now() - lastSentAt > 1500) {
+        try {
+          const r = await fetch(`/api/designs/${id}/presence?sess=${sess}`, { cache: 'no-store' });
+          if (r.ok) await apply(await r.json());
         } catch {}
       }
-      if (!stop) timer = setTimeout(tick, 250);
+      if (!stop) checkTimer = setTimeout(check, alone ? 5000 : 2000);
     };
-    tick();
+
+    watchMoves();
+    checkTimer = setTimeout(check, 2000);
     const bye = () => {
       try { navigator.sendBeacon?.(`/api/designs/${id}/presence`, new Blob([JSON.stringify({ sess, leave: true })], { type: 'application/json' })); } catch {}
     };
     window.addEventListener('pagehide', bye);
-    return () => { stop = true; clearTimeout(timer); window.removeEventListener('pagehide', bye); bye(); };
+    return () => { stop = true; clearTimeout(moveTimer); clearTimeout(checkTimer); window.removeEventListener('pagehide', bye); bye(); };
   }, [id, on]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return { people, color };
