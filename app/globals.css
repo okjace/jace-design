@@ -416,3 +416,11 @@ h3 { font-size: 16px; margin: 0 0 8px; }
 .ctx-slider { display: grid; grid-template-columns: 92px 1fr 40px; align-items: center; gap: 8px; padding: 3px 10px; font-size: 12px; color: var(--muted); }
 .ctx-slider input { width: 100%; accent-color: var(--brand); }
 .ctx-slider .v { text-align: right; }
+
+/* Inbox */
+.inbox-bell { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 10px; font-size: 18px; }
+.inbox-bell:hover { background: var(--panel-2); }
+.inbox-count { position: absolute; top: 1px; right: 0; min-width: 17px; height: 17px; padding: 0 4px; border-radius: 99px; background: var(--danger); color: #fff; font-size: 10.5px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+.inbox-item { display: flex; gap: 12px; align-items: flex-start; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+.inbox-item.unread { border-color: var(--brand); box-shadow: inset 3px 0 0 var(--brand); }
+.inbox-thumb { width: 64px; height: 48px; object-fit: contain; border-radius: 6px; background: var(--panel-2); flex: none; }

@@ -2,6 +2,7 @@ import { after } from 'next/server';
 import { handler, json, requireUser, siteUrl } from '@/lib/auth';
 import { one, q } from '@/lib/db';
 import { emailUser } from '@/lib/jace';
+import { notify } from '@/lib/notify';
 
 export const POST = handler(async (_req, { params }) => {
   const { username } = await params;
@@ -15,6 +16,7 @@ export const POST = handler(async (_req, { params }) => {
   } else {
     await q('INSERT INTO follows (follower_id, following_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [user.id, target.id]);
     const base = await siteUrl();
+    await notify(target.id, { type: 'follow', actor: user });
     after(() => emailUser(target.id, {
       subject: `${user.name || user.username} followed you`,
       heading: 'You have a new follower',

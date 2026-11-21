@@ -118,7 +118,7 @@ export default function ShareModal({ id, title, role, visibility, onVisibility, 
     if (!r.ok) return setMsg({ err: true, text: d.error });
     setShares(d.shares);
     refreshPeople();
-    setMsg({ text: `Shared with @${username.replace(/^@/, '')}. We emailed them a link through Jace.` });
+    setMsg({ text: `Shared with @${username.replace(/^@/, '')}. It's in their Jace Design inbox, and we emailed them too.` });
     setUsername(''); setNote('');
   }
   async function changeShare(s, p) {

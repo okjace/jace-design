@@ -24,6 +24,7 @@ export default function UserMenu({ user }) {
           </div>
           <Link href={`/u/${encodeURIComponent(user.username)}`}>Your profile</Link>
           <Link href="/">Your designs</Link>
+          <Link href="/inbox">Inbox</Link>
           <Link href="/settings">Settings</Link>
           <button
             type="button"

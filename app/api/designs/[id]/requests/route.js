@@ -3,6 +3,7 @@ import { getUser, handler, json, newId, requireUser, siteUrl } from '@/lib/auth'
 import { one, q } from '@/lib/db';
 import { PRESETS, cleanPerms, getGuest, loadDesign } from '@/lib/access';
 import { emailUser } from '@/lib/jace';
+import { notify } from '@/lib/notify';
 
 export const dynamic = 'force-dynamic';
 
@@ -56,6 +57,7 @@ export const POST = handler(async (request, { params }) => {
   );
   const who = user ? `${user.name || user.username} (@${user.username})` : `${guest.name} (no Jace account)`;
   const base = await siteUrl();
+  await notify(design.owner_id, { type: 'access_request', designId: id, actor: user, actorName: user ? null : `${guest.name} (guest)`, data: { message } });
   after(() => emailUser(design.owner_id, {
     subject: `${user ? user.name || user.username : guest.name} asked to see "${design.title}"`,
     heading: 'Someone asked for access',
@@ -95,6 +97,7 @@ export const PATCH = handler(async (request, { params }) => {
     }
     await q(`UPDATE access_requests SET status = 'approved', perms = $2::text::jsonb WHERE id = $1`, [r.id, JSON.stringify(perms)]);
     if (r.user_id) {
+      await notify(r.user_id, { type: 'access_granted', designId: id, actor: user, data: { perms } });
       after(() => emailUser(r.user_id, {
         subject: `You can now open "${design.title}"`,
         heading: 'Access granted',

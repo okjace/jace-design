@@ -3,6 +3,7 @@ import { handler, json, requireUser, siteUrl } from '@/lib/auth';
 import { one, q } from '@/lib/db';
 import { PRESETS, cleanPerms, loadDesign } from '@/lib/access';
 import { emailUser } from '@/lib/jace';
+import { notify } from '@/lib/notify';
 
 async function list(id) {
   return q(`SELECT s.user_id, s.role, s.perms, u.username, u.name, u.picture FROM shares s JOIN users u ON u.id = s.user_id
@@ -40,6 +41,7 @@ export const POST = handler(async (request, { params }) => {
   if (!existed || body.notify) {
     const base = await siteUrl();
     const note = String(body.message || '').trim().slice(0, 1000);
+    await notify(target.id, { type: 'share', designId: id, actor: user, data: { perms, message: note } });
     after(() => emailUser(target.id, {
       subject: `${user.name || user.username} shared "${design.title}" with you`,
       heading: 'A design was shared with you',

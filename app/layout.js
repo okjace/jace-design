@@ -4,6 +4,7 @@ import { getUser } from '@/lib/auth';
 import { GOOGLE_FONTS_HREF } from '@/lib/design';
 import UserMenu from '@/components/UserMenu';
 import FontLoader from '@/components/FontLoader';
+import InboxBell from '@/components/InboxBell';
 
 export const metadata = {
   title: { default: 'Jace Design', template: '%s · Jace Design' },
@@ -38,6 +39,7 @@ export default async function RootLayout({ children }) {
             {user ? (
               <>
                 <Link href="/new" className="btn btn-primary btn-sm hide-sm">+ Create a design</Link>
+                <InboxBell />
                 <UserMenu user={{ username: user.username, name: user.name, picture: user.picture }} />
               </>
             ) : (

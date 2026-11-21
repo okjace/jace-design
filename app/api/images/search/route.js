@@ -36,7 +36,7 @@ async function openverse(term, page, kind) {
   api.searchParams.set('page', String(page));
   api.searchParams.set('mature', 'false');
   if (kind) api.searchParams.set('category', kind);
-  const data = await fetchJson(api);
+  const data = await fetchJson(api, { timeout: 5000 });
   if (!data?.results) return null;
   return {
     hasMore: page < (data.page_count || 1),
@@ -102,11 +102,17 @@ export const GET = handler(async (request) => {
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < TTL) return json(hit.value);
 
-  let out = await openverse(term, page, kind);
+  // Ask both libraries at once. Prefer Openverse, but don't wait on it for more than ~3.5s:
+  // if it's slow, busy or finds nothing, use Wikimedia's answer (already on its way).
+  const ov = openverse(term, page, kind);
+  const wk = wikimedia(term, page);
+  let out = await Promise.race([ov, new Promise((r) => setTimeout(() => r('slow'), 3500))]);
   let provider = 'openverse';
-  if (!out || !out.results.length) {
-    const wiki = await wikimedia(term, page);
-    if (wiki && (wiki.results.length || !out)) { out = wiki; provider = 'wikimedia'; }
+  if (out === 'slow' || !out || !out.results.length) {
+    const wiki = await wk;
+    if (wiki?.results?.length) { out = wiki; provider = 'wikimedia'; }
+    else if (out === 'slow') out = await ov; // Wikimedia had nothing: wait for Openverse after all
+    if (!out && wiki) { out = wiki; provider = 'wikimedia'; }
   }
   if (!out) return json({ error: "Couldn't reach the image libraries. Try again in a moment.", results: [], page, hasMore: false }, 502);
   return json(remember(key, { ...out, page, provider }));

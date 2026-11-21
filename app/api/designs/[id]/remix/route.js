@@ -3,6 +3,7 @@ import { handler, json, newId, requireUser, siteUrl } from '@/lib/auth';
 import { q } from '@/lib/db';
 import { loadDesign, shareDefaults } from '@/lib/access';
 import { emailUser } from '@/lib/jace';
+import { notify } from '@/lib/notify';
 
 export const POST = handler(async (_req, { params }) => {
   const { id } = await params;
@@ -21,6 +22,7 @@ export const POST = handler(async (_req, { params }) => {
   );
   if (!mine && !design.is_template) {
     const base = await siteUrl();
+    await notify(design.owner_id, { type: 'remix', designId: id, actor: user, data: { remix_id: nid } });
     after(() => emailUser(design.owner_id, {
       subject: `${user.name || user.username} remixed "${design.title}"`,
       heading: 'Your design was remixed',

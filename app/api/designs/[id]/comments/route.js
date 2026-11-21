@@ -3,6 +3,7 @@ import { getUser, handler, json, newId, siteUrl } from '@/lib/auth';
 import { q } from '@/lib/db';
 import { getGuest, loadDesign } from '@/lib/access';
 import { emailUser } from '@/lib/jace';
+import { notify } from '@/lib/notify';
 
 export const POST = handler(async (request, { params }) => {
   const { id } = await params;
@@ -21,6 +22,7 @@ export const POST = handler(async (request, { params }) => {
   if (!user || design.owner_id !== user.id) {
     const base = await siteUrl();
     const who = user ? `${user.name || user.username} (@${user.username})` : `${guest.name} (guest)`;
+    await notify(design.owner_id, { type: 'comment', designId: id, actor: user, actorName: user ? null : `${guest.name} (guest)`, data: { text: text.slice(0, 300) } });
     after(() => emailUser(design.owner_id, {
       subject: `${user ? user.name || user.username : guest.name} commented on "${design.title}"`,
       heading: 'New comment on your design',
