@@ -50,8 +50,8 @@ Without `DATABASE_URL` it uses an embedded Postgres (PGlite) stored in `.data/`,
 | `SESSION_SECRET` | Any long random string, used to sign session cookies and encrypt stored tokens. |
 | `DATABASE_URL` | Postgres connection string. With **Supabase** (free plan), open your project → **Connect** → copy the **Transaction pooler** URI (port 6543). Any Postgres works. Tables are created automatically. |
 | `APP_URL` | Optional. The public URL, used for links in emails. |
-| `GROQ_API_KEY` | Optional. Turns on built-in AI (free tier of [Groq](https://console.groq.com/keys), no card needed). Without it, the AI tools use copy-and-paste with ChatGPT, Claude or Gemini. |
-| `GROQ_MODEL` / `AI_DAILY_LIMIT` | Optional. Groq model (default `openai/gpt-oss-120b`) and AI requests per person per day (default 40). |
+| `GEMINI_API_KEY` / `GROQ_API_KEY` / `OPENROUTER_API_KEY` | Optional. Turns on built-in AI using a free tier: [Google Gemini](https://aistudio.google.com/apikey), [Groq](https://console.groq.com/keys) or [OpenRouter](https://openrouter.ai/keys). Set any of them; they're tried in that order. Without one, the AI tools use copy-and-paste with ChatGPT, Claude or Gemini. |
+| `GEMINI_MODEL` / `GROQ_MODEL` / `OPENROUTER_MODEL` / `AI_DAILY_LIMIT` | Optional. Pick models yourself (otherwise a current free model is chosen automatically) and AI requests per person per day (default 40). |
 
 ### Deploying to Vercel
 
