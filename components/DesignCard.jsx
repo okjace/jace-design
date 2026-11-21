@@ -14,6 +14,24 @@ export function Thumb({ data, uid, thumb }) {
     );
   }
   if (typeof data === 'string') { try { data = JSON.parse(data); } catch { data = null; } }
+  if (data?.kind === 'sheet') {
+    const s = data.sheets?.[0] || { cells: {} };
+    return (
+      <div className="thumb">
+        <table className="sheet-thumb">
+          <tbody>
+            {Array.from({ length: 12 }, (_, r) => (
+              <tr key={r}>{'ABCDEF'.split('').map((c) => {
+                const cell = s.cells?.[`${c}${r + 1}`];
+                const v = cell?.v ?? '';
+                return <td key={c} style={{ fontWeight: cell?.b ? 700 : 400, background: cell?.bg }}>{String(v).startsWith('=') ? 'ƒ' : String(v).slice(0, 10)}</td>;
+              })}</tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
   if (data?.kind === 'doc') {
     const s = 190 / (data.width || 816);
     return (

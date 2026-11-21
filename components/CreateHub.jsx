@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { DOC_SIZES, PRESET_GROUPS, blankDoc, blankPage, imageEl, shapeEl, textEl, uid, normalizeDesign } from '@/lib/design';
+import { DOC_SIZES, PRESET_GROUPS, blankDoc, blankPage, blankVideo, imageEl, lineEl, shapeEl, textEl, uid, normalizeDesign } from '@/lib/design';
+import { addr, blankSpreadsheet } from '@/lib/sheet';
 import { TEMPLATES, templateDesign } from '@/lib/templates';
 import { fileToDataUrl } from '@/lib/export';
 import { cleanHtml, markdownToHtml, textToHtml } from '@/lib/htmlClean';
@@ -10,7 +11,156 @@ import AiHelper from './AiHelper';
 import { Thumb } from './DesignCard';
 import { useCreate } from './useCreate';
 
-const TABS = ['All', 'AI', 'Docs', 'Sizes', 'Templates', 'Import', 'Custom size'];
+const TABS = ['All', 'AI', 'Video', 'Docs', 'More kinds', 'Sizes', 'Templates', 'Import', 'Custom size'];
+
+const VIDEO_SIZES = [
+  { name: 'YouTube video', w: 1920, h: 1080, icon: '▶️', note: '16:9' },
+  { name: 'Reel / TikTok / Short', w: 1080, h: 1920, icon: '📱', note: '9:16' },
+  { name: 'Square video', w: 1080, h: 1080, icon: '⬛', note: '1:1' },
+  { name: 'Portrait video', w: 1080, h: 1350, icon: '🖼️', note: '4:5' },
+  { name: 'Video ad (landscape)', w: 1280, h: 720, icon: '📣', note: '720p' },
+];
+
+// ---------- starters for the other kinds ----------
+function whiteboardStarter() {
+  const k = 2;
+  const note = (text, x, y, color) => textEl({ text, x, y, w: 340 * k / 2, fontFamily: 'Caveat', fontSize: 44, color: '#16181d', bgColor: color, lineHeight: 1.25 });
+  return {
+    kind: 'whiteboard', width: 3200, height: 2000, assets: [],
+    pages: [{ ...blankPage('#f4f5f7'), elements: [
+      textEl({ text: 'Brainstorm', x: 120, y: 100, w: 1400, fontFamily: 'Poppins', fontWeight: 700, fontSize: 96, color: '#16181d' }),
+      note('Idea one', 140, 320, '#fde047'), note('Idea two', 560, 360, '#93c5fd'), note('Idea three', 980, 300, '#fda4af'),
+      note('Question?', 1400, 380, '#86efac'),
+    ] }],
+  };
+}
+
+function connector(a, b, color = '#5d6470') {
+  const ax = a.x + a.w / 2, ay = a.y + a.h / 2, bx = b.x + b.w / 2, by = b.y + b.h / 2;
+  const len = Math.hypot(bx - ax, by - ay);
+  const ang = (Math.atan2(by - ay, bx - ax) * 180) / Math.PI;
+  return lineEl({ x: (ax + bx) / 2 - len / 2, y: (ay + by) / 2 - 6, w: len, h: 12, stroke: color, strokeWidth: 6, rotation: ang });
+}
+
+function mindMapStarter() {
+  const W = 3200, H = 2000;
+  const center = shapeEl('ellipse', { x: W / 2 - 280, y: H / 2 - 140, w: 560, h: 280, fill: '#1f9d5a' });
+  const label = (s, text, size = 56, color = '#ffffff') => textEl({ text, x: s.x + 20, y: s.y + s.h / 2 - size * 0.65, w: s.w - 40, fontSize: size, fontFamily: 'Poppins', fontWeight: 700, color, align: 'center' });
+  const colors = ['#fde047', '#93c5fd', '#fda4af', '#86efac', '#fdba74', '#d8b4fe'];
+  const branches = colors.map((c, i) => {
+    const a = (i / colors.length) * Math.PI * 2 - Math.PI / 2;
+    return shapeEl('rect', { x: W / 2 + Math.cos(a) * 1050 - 220, y: H / 2 + Math.sin(a) * 620 - 90, w: 440, h: 180, fill: c, radius: 40 });
+  });
+  return {
+    kind: 'whiteboard', width: W, height: H, assets: [],
+    pages: [{ ...blankPage('#f4f5f7'), elements: [
+      ...branches.map((b) => connector(center, b)),
+      center, label(center, 'Main idea', 72),
+      ...branches.flatMap((b, i) => [b, label(b, `Topic ${i + 1}`, 48, '#16181d')]),
+    ] }],
+  };
+}
+
+function websiteStarter() {
+  const W = 1440, H = 900;
+  const T = (o) => textEl({ x: 140, w: W - 280, ...o });
+  const button = (text, link, x, y, fill = '#1f9d5a', color = '#ffffff') => [
+    { ...shapeEl('rect', { x, y, w: 300, h: 84, fill, radius: 42 }), link },
+    { ...T({ text, x, y: y + 20, w: 300, fontSize: 30, fontWeight: 700, color, align: 'center' }), link },
+  ];
+  return {
+    kind: 'website', width: W, height: H, assets: [], site: { title: 'My website', nav: true },
+    pages: [
+      { ...blankPage(), anchor: 'home', background: { type: 'gradient', from: '#1f9d5a', to: '#0d5c36', angle: 135 }, elements: [
+        T({ text: 'Hello, I make things', y: 250, fontFamily: 'Poppins', fontWeight: 700, fontSize: 96, color: '#ffffff' }),
+        T({ text: 'A short line about what you do and who it’s for.', y: 400, fontSize: 36, color: '#ffffff', opacity: 0.9 }),
+        ...button('About me', '#about', 140, 520, '#ffffff', '#1f9d5a'),
+        ...button('Contact', '#contact', 470, 520, 'rgba(255,255,255,0.15)'),
+      ] },
+      { ...blankPage('#ffffff'), anchor: 'about', elements: [
+        T({ text: 'About', y: 140, fontFamily: 'Poppins', fontWeight: 700, fontSize: 72, color: '#16181d' }),
+        T({ text: 'Tell your story here. What you do, what you love, and what you’re working on next. Add photos from the Photos tab.', y: 280, w: 760, fontSize: 32, color: '#4b515c', lineHeight: 1.5 }),
+        shapeEl('rect', { x: 980, y: 140, w: 320, h: 420, fill: '#e2f4ea', radius: 24 }),
+      ] },
+      { ...blankPage('#16181d'), anchor: 'contact', elements: [
+        T({ text: 'Let’s talk', y: 260, fontFamily: 'Poppins', fontWeight: 700, fontSize: 80, color: '#ffffff', align: 'center' }),
+        T({ text: 'hello@example.com', y: 400, fontSize: 36, color: '#3ddc84', align: 'center', link: 'mailto:hello@example.com' }),
+        ...button('Email me', 'mailto:hello@example.com', W / 2 - 150, 500),
+      ] },
+    ],
+  };
+}
+
+function sheetStarter(kind) {
+  const d = blankSpreadsheet();
+  const s = d.sheets[0];
+  const put = (rows) => rows.forEach((row, r) => row.forEach((v, c) => { if (v !== '' && v != null) s.cells[addr(r, c)] = typeof v === 'object' ? v : { v: String(v) }; }));
+  if (kind === 'budget') {
+    s.name = 'Budget';
+    put([
+      [{ v: 'Monthly budget', b: true }],
+      [],
+      [{ v: 'Category', b: true, bg: '#e2f4ea' }, { v: 'Planned', b: true, bg: '#e2f4ea' }, { v: 'Actual', b: true, bg: '#e2f4ea' }, { v: 'Difference', b: true, bg: '#e2f4ea' }],
+      ['Rent', 1200, 1200, { v: '=B4-C4', fmt: 'currency' }],
+      ['Groceries', 400, 362.5, { v: '=B5-C5', fmt: 'currency' }],
+      ['Transport', 150, 171, { v: '=B6-C6', fmt: 'currency' }],
+      ['Fun', 200, 145, { v: '=B7-C7', fmt: 'currency' }],
+      ['Savings', 300, 300, { v: '=B8-C8', fmt: 'currency' }],
+      [{ v: 'Total', b: true }, { v: '=SUM(B4:B8)', b: true, fmt: 'currency' }, { v: '=SUM(C4:C8)', b: true, fmt: 'currency' }, { v: '=B9-C9', b: true, fmt: 'currency' }],
+    ]);
+    for (const r of [4, 5, 6, 7, 8]) { s.cells[`B${r}`].fmt = 'currency'; s.cells[`C${r}`].fmt = 'currency'; }
+    s.colW = { A: 160 };
+  } else if (kind === 'tracker') {
+    s.name = 'Tasks';
+    put([
+      [{ v: 'Task', b: true, bg: '#dbeafe' }, { v: 'Owner', b: true, bg: '#dbeafe' }, { v: 'Due', b: true, bg: '#dbeafe' }, { v: 'Status', b: true, bg: '#dbeafe' }, { v: 'Done?', b: true, bg: '#dbeafe' }],
+      ['Write the plan', 'Me', '2026-12-01', 'Done', '=IF(D2="Done","✓","")'],
+      ['Design the poster', 'Sam', '2026-12-05', 'Doing', '=IF(D3="Done","✓","")'],
+      ['Send invites', 'Riley', '2026-12-10', 'To do', '=IF(D4="Done","✓","")'],
+      [],
+      [{ v: 'Finished', b: true }, '', '', '', { v: '=COUNTIF_DONE', b: true }],
+    ]);
+    s.cells.E6 = { v: '=COUNTA(E2:E4)-COUNT(E2:E4)', b: true };
+    s.colW = { A: 200 };
+  }
+  return d;
+}
+
+function kanbanStarter() {
+  const W = 2400, H = 1500;
+  const cols = [['To do', '#fde047'], ['Doing', '#93c5fd'], ['Done', '#86efac']];
+  const els = [textEl({ text: 'Project board', x: 80, y: 60, w: 1200, fontFamily: 'Poppins', fontWeight: 700, fontSize: 72, color: '#16181d' })];
+  cols.forEach(([name, color], i) => {
+    const x = 80 + i * 760;
+    els.push(shapeEl('rect', { x, y: 200, w: 700, h: 1220, fill: '#ffffff', radius: 28, stroke: '#dfe2e7', strokeWidth: 3 }));
+    els.push(textEl({ text: name, x: x + 40, y: 240, w: 620, fontFamily: 'Poppins', fontWeight: 700, fontSize: 44, color: '#16181d' }));
+    [0, 1].forEach((j) => els.push(textEl({ text: `${name} item ${j + 1}`, x: x + 50, y: 360 + j * 200, w: 600, fontFamily: 'Caveat', fontSize: 44, color: '#16181d', bgColor: color })));
+  });
+  return { kind: 'whiteboard', width: W, height: H, assets: [], pages: [{ ...blankPage('#f4f5f7'), elements: els }] };
+}
+
+// A ready-made animated intro, so a new video isn't empty.
+function starterVideo(w, h) {
+  const k = Math.min(w, h) / 1080;
+  const T = (o) => textEl({ align: 'center', x: w * 0.08, w: w * 0.84, color: '#ffffff', ...o });
+  const scene = (bg, duration, transition, elements) => ({ ...blankPage(), background: bg, duration, transition, elements });
+  return {
+    kind: 'video', width: w, height: h, assets: [], fonts: [], googleFonts: [],
+    pages: [
+      scene({ type: 'gradient', from: '#1f9d5a', to: '#0d5c36', angle: 135 }, 3, 'none', [
+        T({ text: 'Your big title', y: h * 0.38, fontFamily: 'Poppins', fontWeight: 700, fontSize: 120 * k, anim: { type: 'pop', delay: 0.2, duration: 0.6 } }),
+        T({ text: 'A short line that says more', y: h * 0.38 + 170 * k, fontSize: 48 * k, opacity: 0.9, anim: { type: 'slide-up', delay: 0.7, duration: 0.6 } }),
+      ]),
+      scene({ type: 'color', color: '#16181d' }, 3, 'slide', [
+        T({ text: 'Show what matters', y: h * 0.3, fontFamily: 'Poppins', fontWeight: 700, fontSize: 90 * k, anim: { type: 'typewriter', delay: 0.2, duration: 1.2 } }),
+        shapeEl('rect', { x: w / 2 - 60 * k, y: h * 0.3 + 150 * k, w: 120 * k, h: 10 * k, fill: '#3ddc84', radius: 5 * k, anim: { type: 'zoom', delay: 1.4, duration: 0.5 } }),
+      ]),
+      scene({ type: 'gradient', from: '#3ddc84', to: '#1f9d5a', angle: 160 }, 3, 'fade', [
+        T({ text: 'Thanks for watching!', y: h * 0.42, fontFamily: 'Poppins', fontWeight: 700, fontSize: 96 * k, color: '#0c1410', anim: { type: 'zoom', delay: 0.2, duration: 0.7 } }),
+      ]),
+    ],
+  };
+}
 
 const DOC_TEMPLATES = [
   { name: 'Blank document', icon: '📄', html: '<h1>Untitled document</h1><p>Start typing…</p>' },
@@ -156,7 +306,7 @@ export default function CreateHub() {
       await createFrom(firstHeading || idea.slice(0, 60) || 'Document', blankDoc(aiDocSize, html));
       return;
     }
-    const { title, design } = aiToDesign(extractJson(reply), aw, ah);
+    const { title, design } = aiToDesign(extractJson(reply), aw, ah, ai === 'video' ? 'video' : undefined);
     design.pages = await fillAiImages(design.pages, progress);
     progress?.('Creating your design…');
     await createFrom(title || idea.slice(0, 60) || 'AI design', design);
@@ -219,8 +369,59 @@ export default function CreateHub() {
               <div className="ico">📝</div>
               <div><b>Write a document with AI</b><div className="muted small">Letters, essays, reports, resumes — written for you, ready to edit.</div></div>
             </div>
+            <div className="import-card" onClick={() => { setAiSize('1920x1080'); setAi('video'); }}>
+              <div className="ico">🎬</div>
+              <div><b>Make a video with AI</b><div className="muted small">Animated scenes with transitions, ready to play and download as MP4.</div></div>
+            </div>
           </div>
           <p className="small muted">Works with ChatGPT, Claude, Gemini, Copilot or any AI you like. No account needed here and it&apos;s free.</p>
+        </section>
+      ) : null}
+
+      {show('Video') ? (
+        <section>
+          <h2>🎬 Video</h2>
+          <p className="muted small" style={{ marginTop: -6 }}>Scenes with animations, transitions and music. Play it, then download an MP4.</p>
+          <div className="preset-grid">
+            <button className="preset" disabled={busy} onClick={() => { setAiSize('1920x1080'); setAi('video'); }}>
+              <div style={{ height: 64, display: 'flex', alignItems: 'center' }}><div className="shape" style={{ width: 60, height: 34 }}>✨</div></div>
+              <b>Video with AI</b><small>Describe it, AI makes the scenes</small>
+            </button>
+            <button className="preset" disabled={busy} onClick={() => createFrom('Animated intro', starterVideo(1920, 1080))}>
+              <div style={{ height: 64, display: 'flex', alignItems: 'center' }}><div className="shape" style={{ width: 60, height: 34 }}>🎉</div></div>
+              <b>Animated intro</b><small>3 scenes · ready to edit</small>
+            </button>
+            {VIDEO_SIZES.map((p) => (
+              <button key={p.name} className="preset" disabled={busy} onClick={() => createFrom(p.name, blankVideo(p.w, p.h, 3))}>
+                <div style={{ height: 64, display: 'flex', alignItems: 'center' }}><PresetShape w={p.w} h={p.h} icon={p.icon} /></div>
+                <b>{p.name}</b>
+                <small>{p.w} × {p.h} · {p.note}</small>
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {show('More kinds') ? (
+        <section>
+          <h2>🧩 More kinds</h2>
+          <div className="preset-grid">
+            {[
+              ['🧠', 'Whiteboard', 'Sticky notes, pen, shapes', () => createFrom('Whiteboard', whiteboardStarter())],
+              ['🕸️', 'Mind map', 'Big idea + branches', () => createFrom('Mind map', mindMapStarter())],
+              ['🌐', 'Website', 'Sections + links, published', () => createFrom('My website', websiteStarter())],
+              ['📊', 'Spreadsheet', 'Cells & formulas', () => createFrom('Spreadsheet', blankSpreadsheet())],
+              ['💰', 'Monthly budget', 'Spreadsheet with totals', () => createFrom('Monthly budget', sheetStarter('budget'))],
+              ['✅', 'Task tracker', 'Spreadsheet for to-dos', () => createFrom('Task tracker', sheetStarter('tracker'))],
+              ['📋', 'Kanban board', 'To do · Doing · Done', () => createFrom('Kanban board', kanbanStarter())],
+            ].map(([icon, name, note, go]) => (
+              <button key={name} className="preset" disabled={busy} onClick={go}>
+                <div style={{ height: 64, display: 'flex', alignItems: 'center' }}><div className="shape" style={{ width: 58, height: 44, fontSize: 24 }}>{icon}</div></div>
+                <b>{name}</b>
+                <small>{note}</small>
+              </button>
+            ))}
+          </div>
         </section>
       ) : null}
 
@@ -380,14 +581,14 @@ export default function CreateHub() {
           context={{ width: aw, height: ah, pages: aiPages }}
           onApply={applyAi}
           onClose={() => setAi(null)}
-          extra={ai === 'design' ? (
+          extra={ai === 'design' || ai === 'video' ? (
             <div className="row wrap" style={{ gap: 8 }}>
               <label className="field" style={{ flex: 1, minWidth: 200 }}>Size
                 <select className="input" value={aiSize} onChange={(e) => setAiSize(e.target.value)}>
-                  {PRESET_GROUPS.flatMap((g) => g.items).map((p) => <option key={p.name} value={`${p.w}x${p.h}`}>{p.name} ({p.w}×{p.h})</option>)}
+                  {(ai === 'video' ? VIDEO_SIZES : PRESET_GROUPS.flatMap((g) => g.items)).map((p) => <option key={p.name} value={`${p.w}x${p.h}`}>{p.name} ({p.w}×{p.h})</option>)}
                 </select>
               </label>
-              <label className="field">Pages
+              <label className="field">{ai === 'video' ? 'Scenes' : 'Pages'}
                 <input className="input" type="number" min={1} max={20} value={aiPages} onChange={(e) => setAiPages(Math.min(20, Math.max(1, Number(e.target.value) || 1)))} style={{ width: 80 }} />
               </label>
             </div>

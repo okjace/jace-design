@@ -26,6 +26,8 @@ export default function UserMenu({ user }) {
           <Link href="/">Your designs</Link>
           <Link href="/inbox">Inbox</Link>
           <Link href="/settings">Settings</Link>
+          <a href="https://github.com/okjace/jace-design/releases/latest" target="_blank" rel="noreferrer">⬇ Desktop app</a>
+          <a href="https://github.com/okjace/jace-design" target="_blank" rel="noreferrer">Open source on GitHub</a>
           <button
             type="button"
             onClick={async (e) => {

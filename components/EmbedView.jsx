@@ -2,17 +2,22 @@
 import { useEffect, useState } from 'react';
 import DesignPage from './DesignPage';
 import DocPaper from './DocPaper';
+import SheetView from './SheetView';
 import { registerFonts } from '@/lib/fonts';
 
 export default function EmbedView({ id, title, design }) {
   const [i, setI] = useState(0);
   const [, setReady] = useState(0);
   const isDoc = design.kind === 'doc';
-  const n = isDoc ? 1 : design.pages.length;
+  const n = isDoc || design.kind === 'sheet' ? 1 : design.pages.length;
   useEffect(() => { registerFonts(design).then(() => setReady((x) => x + 1)); }, [design]);
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: '#111', display: 'flex', flexDirection: 'column' }}>
-      {isDoc ? (
+      {design.kind === 'sheet' ? (
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 12, background: '#fff' }}>
+          <SheetView design={design} maxHeight="none" />
+        </div>
+      ) : isDoc ? (
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', justifyContent: 'center', padding: 16 }}>
           <DocPaper design={design} />
         </div>

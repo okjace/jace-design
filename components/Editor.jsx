@@ -9,9 +9,10 @@ import ImageSearch from './ImageSearch';
 import ContextMenu from './ContextMenu';
 import SaveTemplate from './SaveTemplate';
 import { AccessLost, useAccessWatch } from './AccessWatch';
+import VideoPlayer from './VideoPlayer';
 import {
   EMOJI, FONTS, GRADIENTS, PRESET_GROUPS, SWATCHES, blankPage, emojiEl, imageEl, lineEl, normalizeDesign,
-  scalePage, shapeEl, textEl, textFont, textHeight, uid, wrapText,
+  scalePage, shapeEl, textEl, textFont, textHeight, uid, wrapText, ANIMATIONS, videoLength,
 } from '@/lib/design';
 import { TEMPLATES, templateDesign } from '@/lib/templates';
 import { ensureFonts, exportImage, exportJson, exportPdf, exportSvg, fileToDataUrl, renderPageToCanvas } from '@/lib/export';
@@ -132,6 +133,23 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
   const [fontMsg, setFontMsg] = useState('');
   const [gFont, setGFont] = useState('');
   const fontFileRef = useRef(null);
+  const audioRef = useRef(null);
+  const isVideo = design.kind === 'video';
+  const isBoard = design.kind === 'whiteboard';
+  const isSite = design.kind === 'website';
+  const [pen, setPen] = useState(null); // { color, width } while the pen is on
+  const [stroke, setStroke] = useState(null); // the line being drawn right now
+  const addSticky = (color) => addEl(textEl({ text: 'Write something…', fontFamily: 'Caveat', fontSize: 44 * k, w: 340 * k, color: '#16181d', bgColor: color, lineHeight: 1.25 }));
+
+  function addAudio(file) {
+    if (file.size > 3_000_000) { alert('That file is too big. Music must be under 3 MB (about 3 minutes of MP3).'); return; }
+    const r = new FileReader();
+    r.onload = () => {
+      const src = String(r.result).replace(/^data:[^;]*;/, `data:${file.type && file.type.startsWith('audio/') ? file.type : 'audio/mpeg'};`);
+      commit((d) => ({ ...d, audio: { src, name: file.name.slice(0, 80), volume: 0.8 } }));
+    };
+    r.readAsDataURL(file);
+  }
   // If the owner removes you (or makes you view-only) while you're editing, stop saving and say so.
   const lockedOut = useRef(false);
   const { lost, setLost } = useAccessWatch(id, role, () => { lockedOut.current = true; clearTimeout(saveTimer.current); });
@@ -517,7 +535,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
       if (mod && e.key.toLowerCase() === 'x') { if (sel) { clipRef.current = sel; deleteSel(); } return; }
       if (mod && e.key === ']') { e.preventDefault(); reorder(e.shiftKey ? 'front' : 'up'); return; }
       if (mod && e.key === '[') { e.preventDefault(); reorder(e.shiftKey ? 'back' : 'down'); return; }
-      if (e.key === 'Escape') { setSelId(null); setEditingId(null); return; }
+      if (e.key === 'Escape') { setSelId(null); setEditingId(null); setPen(null); return; }
       if (!sel) return;
       if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSel(); return; }
       if (e.key === 'Enter' && sel.type === 'text') { e.preventDefault(); snapshot(); setEditingId(sel.id); return; }
@@ -568,8 +586,41 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
     return { nx, ny, g };
   }
 
+  // ---------- pen (freehand drawing) ----------
+  function startPen(e) {
+    e.preventDefault();
+    const pts = [toDesign(e)];
+    setStroke(pts.slice());
+    const move = (ev) => {
+      const p = toDesign(ev);
+      const last = pts[pts.length - 1];
+      if (Math.hypot(p.x - last.x, p.y - last.y) * zoom < 2) return;
+      pts.push(p);
+      setStroke(pts.slice());
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      setStroke(null);
+      if (pts.length < 2) return;
+      const pad = pen.width / 2;
+      const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y);
+      const x = Math.min(...xs) - pad, y = Math.min(...ys) - pad;
+      const w = Math.max(4, Math.max(...xs) - x + pad), h = Math.max(4, Math.max(...ys) - y + pad);
+      addEl({
+        id: uid(), type: 'draw', x, y, w, h, rotation: 0, opacity: 1, locked: false, hidden: false,
+        stroke: pen.color, strokeWidth: pen.width,
+        points: pts.map((p) => [Math.round(((p.x - x) / w) * 10000) / 10000, Math.round(((p.y - y) / h) * 10000) / 10000]),
+      }, { center: false });
+      setSelId(null);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }
+
   function onCanvasDown(e) {
     if (e.button !== 0) return;
+    if (pen) { startPen(e); return; }
     if (e.target.tagName === 'TEXTAREA' || e.target.classList?.contains('handle')) return;
     const target = e.target.closest?.('[data-id]');
     if (!target) { setSelId(null); setEditingId(null); return; }
@@ -735,6 +786,11 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
       if (kind === 'pdf') await exportPdf(d, title);
       if (kind === 'svg') { const svg = document.getElementById('export-svg'); if (svg) exportSvg(svg, title); }
       if (kind === 'json') exportJson(d, title);
+      if (kind === 'video' || kind === 'video-hd') {
+        const { exportVideo } = await import('@/lib/video');
+        const scale = kind === 'video-hd' ? 1 : Math.min(1, 1280 / Math.max(d.width, d.height));
+        await exportVideo(d, title, { scale, onProgress: (s, total) => setBusy(`Recording video… ${Math.round((s / total) * 100)}% (keep this tab open)`) });
+      }
     } catch (e) {
       alert(`Export failed: ${e.message || e}`);
     } finally {
@@ -771,7 +827,10 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
         <input className="ed-title" value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Design title" />
         <span className="ed-status" title={save === 'error' ? 'Click to retry' : ''} onClick={() => save === 'error' && saveNow()}>{busy || saveLabel}</span>
         <div className="grow" />
-        <button className="btn btn-sm" onClick={() => setModal('present')}>▶ Present</button>
+        {isSite ? <button className="btn btn-sm" onClick={async () => { await saveNow(); window.open(`/s/${id}`, '_blank'); }}>🌐 View site</button> : null}
+        {isVideo
+          ? <button className="btn btn-sm btn-white" onClick={() => setModal('play')}>▶ Play</button>
+          : <button className="btn btn-sm" onClick={() => setModal('present')}>▶ Present</button>}
         <button className="btn btn-sm" onClick={print}>🖨 Print</button>
         <div style={{ position: 'relative' }}>
           <button className="btn btn-sm" onClick={() => setModal(modal === 'download' ? null : 'download')}>⬇ Download</button>
@@ -783,6 +842,8 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
               <button onClick={() => runExport('jpg')}>📷 JPG <small>this page</small></button>
               <button onClick={() => runExport('pdf')}>📄 PDF <small>all pages</small></button>
               <button onClick={() => runExport('svg')}>✏️ SVG <small>this page</small></button>
+              {isVideo ? <button onClick={() => runExport('video')}>🎬 Video <small>MP4, 720p</small></button> : null}
+              {isVideo ? <button onClick={() => runExport('video-hd')}>🎞 Video HD <small>full size</small></button> : null}
               <button onClick={() => runExport('json')}>💾 Jace Design file <small>re-import later</small></button>
             </div>
           ) : null}
@@ -866,6 +927,22 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
 
           {panel === 'elements' ? (
             <>
+              <h4>Draw</h4>
+              <div className="row wrap" style={{ gap: 6 }}>
+                <button className={`btn btn-sm ${pen ? 'active' : ''}`} onClick={() => setPen(pen ? null : { color: '#16181d', width: 6 * k })}>
+                  ✏️ {pen ? 'Pen on (Esc to stop)' : 'Pen'}
+                </button>
+                {pen ? ['#16181d', '#e40014', '#155dfc', '#1f9d5a', '#f99c00', '#7c3aed', '#ffffff'].map((c) => (
+                  <button key={c} className="swatch" title={c} style={{ width: 24, height: 24, background: c, outline: pen.color === c ? '2px solid var(--brand)' : 'none' }} onClick={() => setPen({ ...pen, color: c })} />
+                )) : null}
+              </div>
+              {pen ? <Range label="Thickness" min={1} max={Math.round(60 * k)} value={Math.round(pen.width)} onChange={(v) => setPen({ ...pen, width: v })} /> : null}
+              <h4>Sticky notes</h4>
+              <div className="row wrap" style={{ gap: 6 }}>
+                {['#fde047', '#fda4af', '#93c5fd', '#86efac', '#fdba74', '#d8b4fe'].map((c) => (
+                  <button key={c} className="tile" style={{ width: 44, height: 44, background: c, border: 0, fontSize: 18 }} onClick={() => addSticky(c)} title="Add a sticky note">🗒</button>
+                ))}
+              </div>
               <h4>Shapes</h4>
               <div className="tile-grid">
                 {SHAPES.map(([shape, o], i) => {
@@ -995,7 +1072,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
               {!page.elements.length ? <p className="small muted">This page is empty.</p> : null}
               {[...page.elements].reverse().map((e) => (
                 <div key={e.id} className={`layer ${e.id === selId ? 'active' : ''}`} onClick={() => setSelId(e.id)}>
-                  <span>{e.type === 'text' ? 'T' : e.type === 'image' ? '🖼' : e.type === 'line' ? '—' : '◆'}</span>
+                  <span>{e.type === 'text' ? 'T' : e.type === 'image' ? '🖼' : e.type === 'line' ? '—' : e.type === 'draw' ? '✏️' : '◆'}</span>
                   <span className="name" style={{ opacity: e.hidden ? 0.4 : 1 }}>{e.type === 'text' ? e.text.slice(0, 40) : e.type === 'shape' ? e.shape : e.type}</span>
                   <button title={e.hidden ? 'Show' : 'Hide'} onClick={(ev) => { ev.stopPropagation(); updateEl(e.id, { hidden: !e.hidden }); }}>{e.hidden ? '🙈' : '👁'}</button>
                   <button title={e.locked ? 'Unlock' : 'Lock'} onClick={(ev) => { ev.stopPropagation(); updateEl(e.id, { locked: !e.locked }); }}>{e.locked ? '🔒' : '🔓'}</button>
@@ -1028,6 +1105,12 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
               {guides.map((g, i) => (
                 <div key={i} className="guide" style={g.v ? { left: g.at * zoom, top: 0, width: 1, height: H * zoom } : { top: g.at * zoom, left: 0, height: 1, width: W * zoom }} />
               ))}
+              {pen ? <div className="pen-layer" title="Drawing with the pen (Esc to stop)" /> : null}
+              {stroke ? (
+                <svg className="pen-live" viewBox={`0 0 ${W} ${H}`} width={W * zoom} height={H * zoom}>
+                  <polyline points={stroke.map((p) => `${p.x},${p.y}`).join(' ')} fill="none" stroke={pen?.color} strokeWidth={pen?.width} strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              ) : null}
               {sel && !editingId ? (
                 <div className={`sel-box ${sel.locked ? 'locked' : ''}`} style={{ left: sel.x * zoom, top: sel.y * zoom, width: sel.w * zoom, height: sel.h * zoom, transform: `rotate(${sel.rotation || 0}deg)` }}>
                   {handles.map((h) => (
@@ -1067,7 +1150,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
             {design.pages.map((p, i) => (
               <div key={p.id} className={`ed-page-thumb ${i === pi ? 'active' : ''}`} onClick={() => { setPageIdx(i); setSelId(null); setEditingId(null); }}>
                 <DesignPage design={design} page={p} width={Math.round((72 * design.width) / design.height)} height={72} uidPrefix={`pg${i}-`} />
-                <span className="n">{i + 1}</span>
+                <span className="n">{i + 1}{isVideo ? ` · ${Number(p.duration) || 3}s` : ''}</span>
               </div>
             ))}
             <button className="btn btn-sm" onClick={() => addPage()} title="Add page">＋ Page</button>
@@ -1082,13 +1165,67 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
         <div className="ed-side">
           {sel ? (
             <Props
-              el={sel} update={updateSel} k={k} fonts={fontList} colors={colors}
+              el={sel} update={updateSel} k={k} fonts={fontList} colors={colors} isVideo={isVideo}
+              onPreview={() => setModal('play')}
               onFont={(e) => loadFont(e)}
               actions={{ deleteSel, duplicateSel, reorder, alignSel, replace: () => replaceRef.current?.click(), setBg: () => toBackground(sel), aiText: () => setAi('text') }}
             />
           ) : (
             <>
-              <h4>Page {pi + 1} of {design.pages.length}</h4>
+              <h4>{isVideo ? `Scene ${pi + 1} of ${design.pages.length}` : `Page ${pi + 1} of ${design.pages.length}`}</h4>
+              {isVideo ? (
+                <>
+                  <Range label="Length" min={0.5} max={20} step={0.5} value={Number(page.duration) || 3} suffix="s"
+                    onChange={(v) => commit((d) => mapPage(d, (p) => ({ ...p, duration: v })))} />
+                  <div className="prop">
+                    <label style={{ gridColumn: 'span 2' }}>Transition into this scene
+                      <select value={page.transition || 'fade'} onChange={(e) => commit((d) => mapPage(d, (p) => ({ ...p, transition: e.target.value })))}>
+                        <option value="none">None (cut)</option><option value="fade">Fade</option><option value="slide">Slide</option><option value="zoom">Zoom</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div className="row wrap" style={{ gap: 6, marginTop: 8 }}>
+                    <button className="btn btn-sm btn-primary" onClick={() => setModal('play')}>▶ Play from here</button>
+                    <button className="btn btn-sm" onClick={() => commit((d) => ({ ...d, pages: d.pages.map((p) => ({ ...p, duration: Number(page.duration) || 3, transition: page.transition || 'fade' })) }))}>Use for all scenes</button>
+                  </div>
+                  <div className="small muted" style={{ marginTop: 6 }}>Whole video: {Math.round(videoLength(design) * 10) / 10}s</div>
+                  <h4>Music</h4>
+                  {design.audio ? (
+                    <>
+                      <div className="small">🎵 {design.audio.name}</div>
+                      <Range label="Volume" min={0} max={100} value={Math.round((design.audio.volume ?? 0.8) * 100)} suffix="%"
+                        onChange={(v) => commit((d) => ({ ...d, audio: { ...d.audio, volume: v / 100 } }), { history: false })} />
+                      <button className="btn btn-sm" onClick={() => commit((d) => { const { audio, ...rest } = d; return rest; })}>Remove music</button>
+                    </>
+                  ) : (
+                    <>
+                      <button className="btn btn-sm" onClick={() => audioRef.current?.click()}>🎵 Add music (MP3, up to 3 MB)</button>
+                      <div className="small muted" style={{ marginTop: 4 }}>Only use music you have the rights to.</div>
+                    </>
+                  )}
+                  <input ref={audioRef} type="file" accept="audio/*" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) addAudio(f); }} />
+                </>
+              ) : null}
+              {isSite ? (
+                <>
+                  <div className="prop">
+                    <label style={{ gridColumn: 'span 2' }}>Section name (shown in the site menu)
+                      <input value={page.anchor || ''} placeholder="e.g. about"
+                        onChange={(e) => commit((d) => mapPage(d, (p) => ({ ...p, anchor: e.target.value.replace(/[^\w-]/g, '-').slice(0, 40) })), { history: false })} />
+                    </label>
+                    <label style={{ gridColumn: 'span 2' }}>Website title
+                      <input value={design.site?.title || ''} placeholder={title}
+                        onChange={(e) => commit((d) => ({ ...d, site: { ...(d.site || {}), title: e.target.value.slice(0, 120) } }), { history: false })} />
+                    </label>
+                  </div>
+                  <label className="row small" style={{ gap: 6, marginTop: 6 }}>
+                    <input type="checkbox" checked={design.site?.nav !== false} onChange={(e) => commit((d) => ({ ...d, site: { ...(d.site || {}), nav: e.target.checked } }))} />
+                    Show a menu bar with the section names
+                  </label>
+                  <div className="small muted" style={{ marginTop: 6 }}>Give items a Link (select one, see Link) to make buttons. Use #section-name to jump to a section.</div>
+                  <button className="btn btn-sm btn-primary" style={{ marginTop: 8 }} onClick={async () => { await saveNow(); window.open(`/s/${id}`, '_blank'); }}>🌐 View website</button>
+                </>
+              ) : null}
               <ColorRow label="Background" value={page.background?.type === 'color' ? page.background.color : ''} onChange={(c) => setBg({ type: 'color', color: c })} />
               <h4>Design</h4>
               <div className="small muted">{W} × {H} px</div>
@@ -1124,6 +1261,13 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
           onPrint={print} onDownload={() => setModal('download')} />
       ) : null}
       {modal === 'present' ? <Presenter design={design} start={pi} onClose={() => setModal(null)} /> : null}
+      {modal === 'play' ? (
+        <div className="modal-back" onMouseDown={(e) => e.target === e.currentTarget && setModal(null)}>
+          <div className="video-modal">
+            <VideoPlayer design={design} autoPlay startAt={design.pages.slice(0, pi).reduce((s, p) => s + (Number(p.duration) || 3), 0)} onClose={() => setModal(null)} maxHeight="78vh" />
+          </div>
+        </div>
+      ) : null}
       <AccessLost id={id} lost={lost} />
     </div>
   );
@@ -1235,11 +1379,31 @@ function ResizeMenu({ W, H, onApply, onCopy, onClose }) {
   );
 }
 
-function Props({ el, update, actions, onFont, k, fonts = FONTS, colors = [] }) {
+function Props({ el, update, actions, onFont, k, fonts = FONTS, colors = [], isVideo, onPreview }) {
   const f = el.filters || {};
   const sh = el.shadow || {};
+  const an = el.anim || {};
   return (
     <>
+      {isVideo ? (
+        <>
+          <h4>Animation</h4>
+          <div className="prop">
+            <label style={{ gridColumn: 'span 2' }}>How it appears
+              <select value={an.type || 'none'} onChange={(e) => update({ anim: { duration: 0.7, delay: 0, ...an, type: e.target.value } })}>
+                {ANIMATIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </select>
+            </label>
+          </div>
+          {an.type && an.type !== 'none' ? (
+            <>
+              <Range label="Delay" min={0} max={10} step={0.1} value={Number(an.delay) || 0} suffix="s" onChange={(v) => update({ anim: { ...an, delay: v } })} />
+              <Range label="Speed" min={0.1} max={4} step={0.1} value={Number(an.duration) || 0.7} suffix="s" onChange={(v) => update({ anim: { ...an, duration: v } })} />
+            </>
+          ) : null}
+          <button className="btn btn-sm" onClick={onPreview} style={{ marginTop: 4 }}>▶ Preview scene</button>
+        </>
+      ) : null}
       {el.type === 'text' ? (
         <>
           <div className="row"><h4 className="grow" style={{ margin: 0 }}>Text</h4><button className="btn btn-sm" onClick={actions.aiText}>✨ Rewrite with AI</button></div>
@@ -1362,6 +1526,19 @@ function Props({ el, update, actions, onFont, k, fonts = FONTS, colors = [] }) {
           <Range label="Border width" min={0} max={40} value={el.strokeWidth || 0} onChange={(v) => update({ strokeWidth: v })} />
         </>
       ) : null}
+
+      {el.type === 'draw' ? (
+        <>
+          <h4>Pen stroke</h4>
+          <ColorRow label="Color" value={el.stroke} onChange={(c) => update({ stroke: c })} colors={colors} />
+          <Range label="Thickness" min={1} max={Math.max(40, 60 * k)} value={el.strokeWidth || 6} onChange={(v) => update({ strokeWidth: v })} />
+        </>
+      ) : null}
+
+      <h4>Link</h4>
+      <input className="input" placeholder="https://… (opens when clicked on the website / viewer)" value={el.link || ''}
+        onChange={(e) => update({ link: e.target.value.slice(0, 500) })} style={{ fontSize: 13 }} />
+      {el.link && !/^(https?:\/\/|mailto:|#)/i.test(el.link) ? <div className="small" style={{ color: 'var(--danger)' }}>Links must start with https://, mailto: or #section</div> : null}
 
       <h4>Look</h4>
       <Range label="Transparency" min={0} max={100} value={Math.round((1 - (el.opacity ?? 1)) * 100)} onChange={(v) => update({ opacity: 1 - v / 100 })} suffix="%" />

@@ -5,6 +5,8 @@ import DesignPage from './DesignPage';
 import Presenter from './Presenter';
 import ShareModal from './ShareModal';
 import DocPaper from './DocPaper';
+import VideoPlayer from './VideoPlayer';
+import SheetView from './SheetView';
 import { exportImage, exportPdf } from '@/lib/export';
 import { exportDocWord, exportDocHtml, exportDocText } from '@/lib/docExport';
 import { registerFonts } from '@/lib/fonts';
@@ -20,7 +22,9 @@ export default function DesignViewer({ id, title, design, role, perms = ALL, sig
   const [busy, setBusy] = useState('');
   const [, setFontsReady] = useState(0);
   const isDoc = design.kind === 'doc';
-  const n = isDoc ? 1 : design.pages.length;
+  const isVideo = design.kind === 'video';
+  const isSheet = design.kind === 'sheet';
+  const n = isDoc || isVideo || isSheet ? 1 : design.pages.length;
   const login = () => { location.href = `/api/auth/login?next=/d/${id}`; };
 
   useEffect(() => { registerFonts(design).then(() => setFontsReady((x) => x + 1)); }, [design]);
@@ -40,7 +44,15 @@ export default function DesignViewer({ id, title, design, role, perms = ALL, sig
     setModal(null);
     setBusy('Preparing…');
     try {
-      if (kind === 'doc') exportDocWord(design, title);
+      if (kind === 'csv') {
+        const { makeEvaluator, toCSV } = await import('@/lib/sheet');
+        const s = design.sheets[0];
+        const { downloadBlob, safeName } = await import('@/lib/export');
+        downloadBlob(new Blob([toCSV(s, makeEvaluator(s))], { type: 'text/csv' }), `${safeName(title)}.csv`);
+      } else if (kind === 'video') {
+        const { exportVideo } = await import('@/lib/video');
+        await exportVideo(design, title, { scale: Math.min(1, 1280 / Math.max(design.width, design.height)), onProgress: (s, t) => setBusy(`Recording video… ${Math.round((s / t) * 100)}%`) });
+      } else if (kind === 'doc') exportDocWord(design, title);
       else if (kind === 'html') exportDocHtml(design, title);
       else if (kind === 'txt') exportDocText(design, title);
       else if (kind === 'pdf') await exportPdf(design, title);
@@ -51,7 +63,11 @@ export default function DesignViewer({ id, title, design, role, perms = ALL, sig
   return (
     <div className="stack" style={{ gap: 14, minWidth: 0 }}>
       <div className="viewer-stage">
-        {isDoc ? (
+        {isSheet ? (
+          <div style={{ width: '100%' }}><SheetView design={design} /></div>
+        ) : isVideo ? (
+          <div style={{ width: '100%' }}><VideoPlayer design={design} /></div>
+        ) : isDoc ? (
           <div style={{ width: '100%', overflow: 'auto', maxHeight: '75vh', display: 'flex', justifyContent: 'center' }}>
             <DocPaper design={design} />
           </div>
@@ -77,7 +93,9 @@ export default function DesignViewer({ id, title, design, role, perms = ALL, sig
             <button className="btn" onClick={() => setModal(modal === 'dl' ? null : 'dl')}>⬇ Download</button>
             {modal === 'dl' ? (
               <div className="dropdown" style={{ left: 0, right: 'auto' }}>
-                {isDoc ? (
+                {isVideo ? <button onClick={() => download('video')}>🎬 Video <small>MP4</small></button> : null}
+                {isSheet ? <button onClick={() => download('csv')}>📊 Spreadsheet <small>.csv</small></button> : null}
+                {isSheet ? null : isDoc ? (
                   <>
                     <button onClick={() => download('doc')}>📝 Word <small>.doc</small></button>
                     <button onClick={() => download('html')}>🌐 Web page <small>.html</small></button>
@@ -97,7 +115,7 @@ export default function DesignViewer({ id, title, design, role, perms = ALL, sig
           </div>
         ) : null}
         {perms.print ? <a className="btn" href={`/d/${id}/print`} target="_blank" rel="noreferrer">🖨 Print</a> : null}
-        {!isDoc ? <button className="btn" onClick={() => setModal('present')}>▶ Present</button> : null}
+        {!isDoc && !isVideo ? <button className="btn" onClick={() => setModal('present')}>▶ Present</button> : null}
         {busy ? <span className="muted small">{busy}</span> : null}
       </div>
       {modal === 'share' ? <ShareModal id={id} title={title} role={role} visibility={visibility} onVisibility={async (v) => {

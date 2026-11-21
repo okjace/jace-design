@@ -3,6 +3,7 @@ import { getUser } from '@/lib/auth';
 import { canEdit, loadDesign, recordVisit } from '@/lib/access';
 import Editor from '@/components/Editor';
 import DocEditor from '@/components/DocEditor';
+import SheetEditor from '@/components/SheetEditor';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,5 +23,6 @@ export default async function EditPage({ params }) {
   if (!canEdit(role)) redirect(`/d/${id}`);
   await recordVisit(design, user, null);
   const props = { id, initialDesign: design.data, initialTitle: design.title, initialVisibility: design.visibility, role };
+  if (design.data?.kind === 'sheet') return <SheetEditor {...props} />;
   return design.data?.kind === 'doc' ? <DocEditor {...props} /> : <Editor {...props} />;
 }

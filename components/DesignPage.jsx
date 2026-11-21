@@ -127,6 +127,17 @@ export function Element({ el, pid }) {
     );
   }
 
+  if (el.type === 'draw') {
+    // Freehand pen stroke: points are stored 0..1 inside the element's box, so it resizes with it.
+    const pts = (el.points || []).map(([px, py]) => `${el.x + px * el.w},${el.y + py * el.h}`).join(' ');
+    return (
+      <g {...common}>
+        <rect x={el.x} y={el.y} width={el.w} height={el.h} fill="transparent" />
+        <polyline points={pts} fill="none" stroke={el.stroke || '#16181d'} strokeWidth={el.strokeWidth || 6} strokeLinecap="round" strokeLinejoin="round" />
+      </g>
+    );
+  }
+
   if (el.type === 'shape') {
     const paint = {
       fill: el.fill || 'none', stroke: el.strokeWidth ? el.stroke : 'none', strokeWidth: el.strokeWidth || 0,

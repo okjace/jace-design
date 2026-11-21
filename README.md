@@ -1,19 +1,36 @@
 # Jace Design
 
+[![CI](https://github.com/okjace/jace-design/actions/workflows/ci.yml/badge.svg)](https://github.com/okjace/jace-design/actions/workflows/ci.yml)
+[![Desktop app](https://github.com/okjace/jace-design/actions/workflows/desktop.yml/badge.svg)](https://github.com/okjace/jace-design/actions/workflows/desktop.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-1f9d5a.svg)](LICENSE)
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fokjace%2Fjace-design&env=JACE_CLIENT_ID,JACE_CLIENT_SECRET,SESSION_SECRET,DATABASE_URL)
 
-**Design anything, share it everywhere.** Jace Design is a free, open-source design tool — like Canva, but better — that uses **Sign in with Jace**.
+**Design anything, share it everywhere.** Jace Design is a free, **open-source** design app — like Canva, but better —
+with **Sign in with Jace**. Use it at **[jace-design.vercel.app](https://jace-design.vercel.app)** or download the desktop app.
 
-- 🎨 **Real editor** — text with 20 fonts, shapes, lines & arrows, stickers, photos with filters, gradients, shadows, outlines, layers, lock/hide, snapping guides, rotate & resize, multi-page, undo/redo, keyboard shortcuts, speaker notes, present mode.
-- 🧩 **Create tab** — 40+ sizes (social, video, presentations, docs, print, marketing), templates, custom sizes in px/in/cm/mm.
-- 📥 **Imports** — images & SVGs (one page each), Jace Design files (`.jdesign.json`), Markdown/text outlines → slides, any public Jace Design link (remix), paste from clipboard, drag & drop.
-- 🔗 **Share** — private / anyone-with-link / public, share with Jace users (view or edit), social share links, embed code.
-- ⬇️ **Export** — PNG (incl. HD & transparent), JPG, SVG, multi-page PDF, Jace Design file.
-- 🖨️ **Print** — paper sizes (A3/A4/A5/Letter/Legal/Tabloid/photo), orientation, fit or actual size, margins, crop marks, page ranges, copies.
-- 👤 **Public profiles** — bio, website, followers, liked designs; Explore feed with search, popular and following tabs; likes, comments, remixes.
-- 📧 **Emails with Jace** — comment, remix, follow and share notifications sent through Jace's email API (Jace Design never sees anyone's address), plus a **Send test email** button in Settings.
+## What you can make
 
-## Running it
+| Kind | What it does |
+| --- | --- |
+| 🎨 **Designs** | Posts, slides, posters, cards, logos… Text with ~280 fonts (or your own), shapes, photos with filters, pen, sticky notes, layers, blend modes, presenting |
+| 🎬 **Videos** | Scenes with transitions, animated text and shapes, music; play it and download an MP4 |
+| 📄 **Documents** | Word-style: headings, lists, tables, images, page setup; import `.docx`, download Word/PDF |
+| 📊 **Spreadsheets** | Cells, formulas (`=SUM(A1:A5)`, `IF`, `AVERAGE`…), formatting, multiple sheets, CSV import/export |
+| 🌐 **Websites** | Sections with links and a menu, published at their own address |
+| 🧠 **Whiteboards** | Big canvas, sticky notes, pen, mind maps and kanban boards |
+
+Plus: templates (yours and the community's), free photo search (Openverse + Wikimedia Commons), AI help with any AI you like,
+sharing with view / comment / edit / custom permissions, ask-for-access, guests with names, Jace Social sharing,
+an inbox with live updates, comments, likes, remixes, public profiles, printing and every common download format.
+
+## Desktop app
+
+Download it from **[Releases](https://github.com/okjace/jace-design/releases/latest)**:
+Windows (`.exe`), macOS Apple Silicon / Intel (`.app.zip`) and Linux (`.AppImage`).
+Open the download once and it installs itself (Start menu / Dock / applications menu, desktop shortcut), keeps you signed in,
+and updates with one click. It uses the same installer as [Jace Launcher](https://github.com/okjace/jace-launcher).
+
+## Running the website yourself
 
 You need Node.js 20+.
 
@@ -29,29 +46,30 @@ Without `DATABASE_URL` it uses an embedded Postgres (PGlite) stored in `.data/`,
 
 | Name | What it is |
 | --- | --- |
-| `JACE_CLIENT_ID` / `JACE_CLIENT_SECRET` | From your Jace account → Manage account → Developer. Register the redirect URI `https://YOUR-DOMAIN/api/auth/callback` (and `http://localhost:3000/api/auth/callback` for development). Emails need the app to be an **official** Jace app. |
-| `SESSION_SECRET` | Any long random string, used to sign session cookies. |
-| `DATABASE_URL` | Postgres connection string. With **Supabase** (free plan), open your project → **Connect** → copy the **Transaction pooler** URI (port 6543) and put your database password in it. Any Postgres works. Tables are created automatically. |
+| `JACE_CLIENT_ID` / `JACE_CLIENT_SECRET` | From your Jace account → Manage account → Developer. Register the redirect URI `https://YOUR-DOMAIN/api/auth/callback` (and `http://localhost:3000/api/auth/callback` for development). Emails and Jace Social sharing need the app to be an **official** Jace app. |
+| `SESSION_SECRET` | Any long random string, used to sign session cookies and encrypt stored tokens. |
+| `DATABASE_URL` | Postgres connection string. With **Supabase** (free plan), open your project → **Connect** → copy the **Transaction pooler** URI (port 6543). Any Postgres works. Tables are created automatically. |
 | `APP_URL` | Optional. The public URL, used for links in emails. |
 
-## Deploying to Vercel
+### Deploying to Vercel
 
 1. Import this repository in Vercel (framework: Next.js, no settings to change).
-2. Create a free **Supabase** project at supabase.com and copy its Transaction pooler connection string.
+2. Create a free **Supabase** project and copy its Transaction pooler connection string.
 3. Add `DATABASE_URL`, `JACE_CLIENT_ID`, `JACE_CLIENT_SECRET` and `SESSION_SECRET` under Settings → Environment Variables.
 4. Add `https://<your-project>.vercel.app/api/auth/callback` as a redirect URI on your Jace app, then redeploy.
 
 ## How it's built
 
-- Next.js (App Router), plain CSS, no UI framework.
-- Designs are JSON (`lib/design.js`): pages of elements (text, shape, line, image). One SVG renderer (`components/DesignPage.jsx`) draws them everywhere — editor, thumbnails, viewer, print — and a Canvas renderer (`lib/export.js`) makes PNG/JPG/PDF files.
-- Sign in with Jace is standard OAuth 2.0 (`app/api/auth/*`). Jace always shows its consent screen, so people see which account and what access Jace Design gets.
-- Emails go through `POST https://jaceo.vercel.app/api/oauth/email` with the app's client credentials (`lib/jace.js`).
+- Next.js (App Router), plain CSS, no UI framework; Postgres for storage.
+- Designs are JSON (`lib/design.js`). One SVG renderer (`components/DesignPage.jsx`) draws them everywhere, and a Canvas
+  renderer (`lib/export.js`) makes PNG / JPG / PDF files and video frames (`lib/video.js`).
+- Sign in with Jace is standard OAuth 2.0 (`app/api/auth/*`). Emails go through Jace's email API (`lib/jace.js`).
+- The desktop app (`desktop/`) is Python + Qt WebEngine, built and released by GitHub Actions.
 
 ## Contributing
 
-Issues and pull requests are welcome. Keep it simple and keep it fast.
+Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Security issues: [SECURITY.md](SECURITY.md).
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) — free to use, change and share.
