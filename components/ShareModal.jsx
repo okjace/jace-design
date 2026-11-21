@@ -400,10 +400,8 @@ function PersonRow({ p, linkOpen, onPatch }) {
             title="Take away their access and remove them from this list"
             onClick={() => {
               if (linkOpen) {
-                // With the link open they could just come back, so removing means blocking.
-                if (confirm(`Anyone with the link can still open this design, so ${p.name} could get back in.\n\nBlock ${p.name} instead? (You can unblock them later.)`)) {
-                  onPatch({ key: p.key, action: 'block' });
-                }
+                // With the link open they could just come back, so removing means blocking (Unblock undoes it).
+                onPatch({ key: p.key, action: 'block' });
               } else if (confirm(`Remove ${p.name}? They won't be able to open this design anymore.`)) {
                 onPatch({ key: p.key, action: 'remove' });
               }
