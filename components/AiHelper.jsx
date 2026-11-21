@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { AIS, buildPrompt, copyText } from '@/lib/ai';
+import { askAi, useAiStatus } from '@/lib/aiClient';
 
 const TITLES = {
   design: '✨ Design with AI',
@@ -41,6 +42,28 @@ export default function AiHelper({ mode, context = {}, onApply, onClose, extra }
   const [busy, setBusy] = useState('');
   const needsIdea = !['page', 'redo', 'text', 'doc-edit', 'palette'].includes(mode);
   const prompt = buildPrompt(mode, { ...context, idea });
+  const [ai, setLeft] = useAiStatus();
+  const [other, setOther] = useState(false); // show the copy-paste way when built-in AI is on
+
+  // Built-in AI: ask it here and use the answer straight away.
+  async function makeIt() {
+    setErr('');
+    setBusy('✨ Thinking…');
+    try {
+      const d = await askAi(prompt);
+      setLeft(d.left);
+      setReply(d.text);
+      setBusy('Adding it to your design…');
+      await onApply(d.text, idea, setBusy);
+      onClose();
+    } catch (e) {
+      if (typeof e.left === 'number') setLeft(e.left);
+      setErr(e.message || String(e));
+    } finally {
+      setBusy('');
+    }
+  }
+  const builtIn = ai.available && !other;
 
   async function openAi(ai) {
     const ok = await copyText(prompt);
@@ -69,7 +92,7 @@ export default function AiHelper({ mode, context = {}, onApply, onClose, extra }
         <div className="modal-head"><h3>{TITLES[mode] || '✨ AI'}</h3><button className="btn btn-ghost btn-sm" onClick={onClose}>✕</button></div>
         <div className="modal-body">
           <p className="small muted" style={{ margin: 0 }}>
-            Use any AI you like, free. We write the perfect prompt, you paste it into your AI, then paste its answer back here.
+            {builtIn ? 'Describe what you want and Jace AI makes it right here.' : 'Use any AI you like, free. We write the perfect prompt, you paste it into your AI, then paste its answer back here.'}
           </p>
 
           <div className="stack">
@@ -78,6 +101,19 @@ export default function AiHelper({ mode, context = {}, onApply, onClose, extra }
             {extra}
           </div>
 
+          {builtIn ? (
+            <div className="stack">
+              {err ? <div className="notice err" style={{ margin: 0 }}>{err}</div> : null}
+              <div className="row">
+                <div className="grow small muted">{busy || (typeof ai.left === 'number' ? `${ai.left} of ${ai.limit} AI requests left today` : '')}</div>
+                <button className="btn" onClick={onClose}>Cancel</button>
+                <button className="btn btn-primary" disabled={(needsIdea && !idea.trim()) || !!busy || ai.left === 0} onClick={makeIt}>{busy ? 'Working…' : '✨ Make it'}</button>
+              </div>
+              <button className="btn btn-sm btn-ghost" style={{ alignSelf: 'flex-start' }} onClick={() => setOther(true)}>Or use another AI (ChatGPT, Claude, Gemini…)</button>
+            </div>
+          ) : null}
+
+          {!builtIn ? (<>
           <div className="stack">
             <b>2. Send the prompt to your AI</b>
             <div className="row wrap" style={{ gap: 6 }}>
@@ -102,7 +138,9 @@ export default function AiHelper({ mode, context = {}, onApply, onClose, extra }
               <button className="btn" onClick={onClose}>Cancel</button>
               <button className="btn btn-primary" disabled={!reply.trim() || !!busy} onClick={apply}>Use this</button>
             </div>
+            {ai.available ? <button className="btn btn-sm btn-ghost" style={{ alignSelf: 'flex-start' }} onClick={() => { setOther(false); setErr(''); }}>← Back to Jace AI</button> : null}
           </div>
+          </>) : null}
         </div>
       </div>
     </div>

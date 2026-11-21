@@ -4,6 +4,8 @@ import DesignPage from './DesignPage';
 import { AIS } from '@/lib/ai';
 import { CHART_TYPES, chartEl, qrEl, tableEl } from '@/lib/blocks';
 import { textEl, shapeEl } from '@/lib/design';
+import { askAi, useAiStatus } from '@/lib/aiClient';
+import SpellCheck from './SpellCheck';
 
 // Apps that come with Jace Design. Each one gets `api` (what it may do to the design) and `onClose`.
 // api: { W, H, k, sel, addEl(el), recolor(colors), setBg(bg), openMockups(), removeBg(), panel(name) }
@@ -38,12 +40,25 @@ function AskAiApp({ api, onClose }) {
   const selText = api.sel?.type === 'text' ? api.sel.text : '';
   const [ask, setAsk] = useState(selText ? `Rewrite this to be more catchy: "${selText}"` : '');
   const [answer, setAnswer] = useState('');
+  const [ai, setLeft] = useAiStatus();
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
   const prompt = `${ask.trim()}\n\nReply with only the text to put in my design, no extra explanation.`;
   return (
     <>
       <label className="field">What should the AI write?
         <textarea className="input" rows={3} value={ask} onChange={(e) => setAsk(e.target.value)} placeholder="e.g. A short, fun headline for a bake sale poster" autoFocus />
       </label>
+      {ai.available ? (
+        <div className="row wrap" style={{ gap: 8 }}>
+          <button className="btn btn-primary" disabled={!ask.trim() || busy || ai.left === 0} onClick={async () => {
+            setBusy(true); setErr('');
+            try { const d = await askAi(prompt); setLeft(d.left); setAnswer(d.text.trim()); } catch (e) { setErr(e.message); } finally { setBusy(false); }
+          }}>{busy ? '✨ Writing…' : '✨ Write it with Jace AI'}</button>
+          <span className="small muted">{typeof ai.left === 'number' ? `${ai.left} left today` : ''}</span>
+          {err ? <span className="small" style={{ color: 'var(--danger)' }}>{err}</span> : null}
+        </div>
+      ) : null}
       <div className="row wrap" style={{ gap: 6 }}>
         {AIS.map((a) => (
           <button key={a.name} className={`btn btn-sm ${a.name === 'ChatGPT' ? 'btn-primary' : ''}`} disabled={!ask.trim()}
@@ -52,8 +67,8 @@ function AskAiApp({ api, onClose }) {
           </button>
         ))}
       </div>
-      <div className="small muted">Opens in a new tab (the question is also copied, so you can paste it). Then paste the answer here:</div>
-      <textarea className="input" rows={4} value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="Paste the AI's answer" />
+      <div className="small muted">{ai.available ? 'Or ask another AI' : 'Opens in a new tab'} (the question is also copied, so you can paste it){ai.available ? '.' : '. Then paste the answer here:'}</div>
+      <textarea className="input" rows={4} value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder={ai.available ? 'The answer appears here (you can edit it)' : "Paste the AI's answer"} />
       <div className="row wrap" style={{ gap: 6 }}>
         <button className="btn btn-primary" disabled={!answer.trim()} onClick={() => { api.addEl(textEl({ text: answer.trim().replace(/^"|"$/g, ''), fontSize: 44 * api.k, w: Math.min(api.W * 0.8, 900 * api.k) })); onClose(); }}>Add as text</button>
         {selText ? <button className="btn" disabled={!answer.trim()} onClick={() => { api.updateSel({ text: answer.trim().replace(/^"|"$/g, '') }); onClose(); }}>Replace the selected text</button> : null}
@@ -194,7 +209,8 @@ function ActionApp({ run, text }) {
 /** Apps that come with Jace Design: [id, icon, name, description, component] */
 export const BUILTIN_APPS = [
   { id: 'qr', icon: '🔳', name: 'QR code maker', desc: 'Turn a link or text into a QR code', App: QrApp },
-  { id: 'chatgpt', icon: '🤖', name: 'ChatGPT & AI writer', desc: 'Ask ChatGPT, Claude or Gemini to write text for your design', App: AskAiApp },
+  { id: 'chatgpt', icon: '🤖', name: 'AI writer', desc: 'Jace AI writes text for your design (or ask ChatGPT, Claude, Gemini)', App: AskAiApp },
+  { id: 'spelling', icon: '🔤', name: 'Spell check', desc: 'Find and fix spelling mistakes in the whole design', App: ({ api, onClose }) => <SpellCheck api={api} onClose={onClose} /> },
   { id: 'calendar', icon: '📅', name: 'Calendar maker', desc: 'A month calendar as a table', App: CalendarApp },
   { id: 'palette', icon: '🎨', name: 'Color palettes', desc: 'Generate color schemes and recolor a page', App: PaletteApp },
   { id: 'gradient', icon: '🌈', name: 'Gradient maker', desc: 'Make a gradient background or shape', App: GradientApp },

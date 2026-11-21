@@ -8,6 +8,7 @@ import AiHelper from './AiHelper';
 import ImageSearch from './ImageSearch';
 import PhotoLibrary from './PhotoLibrary';
 import AppsPanel from './AppsPanel';
+import SpellCheck from './SpellCheck';
 import ContextMenu from './ContextMenu';
 import SaveTemplate from './SaveTemplate';
 import { AccessLost, useAccessWatch } from './AccessWatch';
@@ -459,6 +460,16 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
     },
     recolor,
     setBg,
+    pages: design.pages,
+    editText: (pIndex, eid, path, text) => commit((d) => mapPage(d, (p) => ({
+      ...p,
+      elements: p.elements.map((e) => {
+        if (e.id !== eid) return e;
+        if (!path) return fixEl({ ...e, text });
+        return { ...e, rows: (e.rows || []).map((row, r) => (r === path[0] ? row.map((c, ci) => (ci === path[1] ? text : c)) : row)) };
+      }),
+    }), pIndex)),
+    goTo: (pIndex, eid) => { setPageIdx(pIndex); selectIds([eid]); },
     openMockups: () => setModal('mockups'),
     removeBg: () => (sel?.type === 'image' && !sel.icon ? removeBackground(sel) : alert('Select a photo on the page first, then open the Background remover.')),
     panel: (name) => setPanel(name),
@@ -1248,7 +1259,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
           {panel === 'ai' ? (
             <>
               <h4>AI tools</h4>
-              <p className="small muted" style={{ marginTop: 0 }}>Works with any AI (ChatGPT, Claude, Gemini…). We write the prompt, you paste the answer back.</p>
+              <p className="small muted" style={{ marginTop: 0 }}>Jace AI makes it for you right here. You can also use any AI you like (ChatGPT, Claude, Gemini…).</p>
               <div className="stack" style={{ gap: 8 }}>
                 <button className="text-preset" onClick={() => setAi('redo')}><b>🪄 Redo the whole design</b><div className="small muted">AI redesigns every page: fonts, colors, backgrounds, photos</div></button>
                 <button className="text-preset" onClick={() => setAi('pages')}><b>✨ Add pages with AI</b><div className="small muted">Describe new slides or pages</div></button>
@@ -1597,6 +1608,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
               {editingEl ? (
                 <textarea
                   className="text-editor"
+                  spellCheck
                   autoFocus
                   value={editingEl.text}
                   onChange={(e) => updateEl(editingEl.id, { text: e.target.value }, { history: false })}
@@ -1965,7 +1977,11 @@ function Props({ el, update, actions, onFont, k, fonts = FONTS, colors = [], isV
       {el.type === 'text' ? (
         <>
           <div className="row"><h4 className="grow" style={{ margin: 0 }}>Text</h4><button className="btn btn-sm" onClick={actions.aiText}>✨ Rewrite with AI</button></div>
-          <textarea className="input" rows={3} value={el.text} onChange={(e) => update({ text: e.target.value })} style={{ marginTop: 8 }} />
+          <textarea className="input" rows={3} spellCheck value={el.text} onChange={(e) => update({ text: e.target.value })} style={{ marginTop: 8 }} />
+          <details className="spell-details">
+            <summary>🔤 Check spelling</summary>
+            <SpellCheck only={el.id} api={{ pages: [{ elements: [el] }], editText: (_p, _id, _path, text) => update({ text }), goTo: () => {} }} />
+          </details>
           <div className="prop" style={{ marginTop: 8 }}>
             <label style={{ gridColumn: 'span 2' }}>Font
               <select value={el.fontFamily} onChange={(e) => { update({ fontFamily: e.target.value }); onFont({ ...el, fontFamily: e.target.value }); }} style={{ fontFamily: el.fontFamily }}>
