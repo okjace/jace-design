@@ -7,6 +7,7 @@ import UserMenu from '@/components/UserMenu';
 import FontLoader from '@/components/FontLoader';
 import InboxBell from '@/components/InboxBell';
 import ThemeToggle from '@/components/ThemeToggle';
+import TermsNotice from '@/components/TermsNotice';
 
 export const metadata = {
   title: { default: 'Jace Design', template: '%s · Jace Design' },
@@ -55,6 +56,7 @@ export default async function RootLayout({ children }) {
           </div>
         </header>
         {children}
+        <TermsNotice />
       </body>
     </html>
   );

@@ -10,6 +10,7 @@ export function useSaver({ id, version, getBody, onLocked, onSaved, onRestore })
   const [state, setState] = useState('saved');
   const [conflict, setConflict] = useState(null);
   const [backup, setBackup] = useState(null);
+  const [notice, setNotice] = useState('');
   const ref = useRef(null);
   const cbs = useRef({});
   cbs.current = { getBody, onLocked, onSaved, onRestore };
@@ -22,6 +23,7 @@ export function useSaver({ id, version, getBody, onLocked, onSaved, onRestore })
       onState: setState,
       onLocked: () => cbs.current.onLocked?.(),
       onConflict: (info) => setConflict(info || {}),
+      onNotice: (text) => { setNotice(text); clearTimeout(ref.noticeTimer); ref.noticeTimer = setTimeout(() => setNotice(''), 6000); },
       onSaved: () => { setConflict(null); cbs.current.onSaved?.(); },
     });
     ref.current = s;
@@ -53,6 +55,7 @@ export function useSaver({ id, version, getBody, onLocked, onSaved, onRestore })
           <button className="btn btn-sm" onClick={() => { clearBackup(id); setBackup(null); }}>Discard</button>
         </div>
       ) : null}
+      {notice ? <div className="save-notice" role="status"><span>ℹ️ {notice}</span><button className="btn btn-sm" onClick={() => setNotice('')}>OK</button></div> : null}
       {conflict ? (
         <div className="modal-back" style={{ zIndex: 950 }}>
           <div className="modal" style={{ width: 'min(460px, 100%)' }}>

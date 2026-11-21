@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { AccountTerms } from './TermsNotice';
 
 // Shown to visitors without a Jace account: they give a name before seeing a design.
 export default function GuestGate({ title, next }) {
@@ -29,6 +30,7 @@ export default function GuestGate({ title, next }) {
           <input className="input" placeholder="Your name" value={name} onChange={(e) => setName(e.target.value)} maxLength={50} autoFocus required />
           {err ? <div className="notice err" style={{ margin: 0 }}>{err}</div> : null}
           <button className="btn btn-primary" disabled={busy || name.trim().length < 2}>Continue as guest</button>
+          <AccountTerms />
         </form>
       </div>
     </main>

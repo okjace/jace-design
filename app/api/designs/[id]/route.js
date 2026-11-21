@@ -53,8 +53,15 @@ export const PUT = handler(async (request, { params }) => {
   let where = 'id = $1';
   if (edit && typeof body.expected === 'string' && body.expected) {
     // Someone else (or another tab) saved since this editor loaded: don't overwrite their work silently.
+    // (Compared to the millisecond, so tiny differences in how the time is written never count.)
     vals.push(body.expected);
-    where += ` AND updated_at = $${vals.length}::timestamptz`;
+    where += ` AND ABS(EXTRACT(EPOCH FROM (updated_at - $${vals.length}::timestamptz))) < 0.001`;
+  }
+  // Remember who saved (and from which open editor), so a save can tell "someone else" from "me, a moment ago".
+  const client = typeof body.client === 'string' ? body.client.replace(/[^\w-]/g, '').slice(0, 40) : '';
+  if (edit) {
+    vals.push(user.id); sets.push(`saved_by = $${vals.length}`);
+    vals.push(client); sets.push(`saved_client = $${vals.length}`);
   }
   if (body.design) await snapshotVersion(id, user.id);
   const rows = await q(
@@ -62,8 +69,12 @@ export const PUT = handler(async (request, { params }) => {
     vals
   );
   if (!rows.length) {
-    const cur = await one('SELECT updated_at::text AS v FROM designs WHERE id = $1', [id]);
-    return json({ error: 'conflict', updated_at: cur?.v || null }, 409);
+    const cur = await one('SELECT updated_at::text AS v, saved_by, saved_client FROM designs WHERE id = $1', [id]);
+    return json({
+      error: 'conflict', updated_at: cur?.v || null,
+      same_client: !!client && cur?.saved_client === client, // this very editor saved it (a reply got lost)
+      same_user: cur?.saved_by === user.id, // you, in another tab or window
+    }, 409);
   }
   return json({ ok: true, updated_at: rows[0].v });
 });

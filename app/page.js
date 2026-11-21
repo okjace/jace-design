@@ -14,7 +14,10 @@ export const dynamic = 'force-dynamic';
 const ERRORS = {
   not_configured: 'Sign in with Jace is not set up yet: add JACE_CLIENT_ID and JACE_CLIENT_SECRET (see the README).',
   banned: 'This Jace account is banned.',
-  access_denied: 'Sign-in was cancelled.',
+  access_denied: 'Sign-in was cancelled. Press “Sign in with Jace” and choose Allow to continue.',
+  interaction_required: 'Jace needs you to approve the sign-in. Press “Sign in with Jace” and choose Allow.',
+  consent_required: 'Jace needs you to approve the sign-in. Press “Sign in with Jace” and choose Allow.',
+  login_required: 'Sign in to Jace first, then try again.',
   bad_state: 'Sign-in expired, please try again.',
   signin_failed: 'Sign-in failed. Please try again.',
 };

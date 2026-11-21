@@ -12,7 +12,6 @@ function safeNext(n) {
 export async function GET(request) {
   const url = new URL(request.url);
   const next = safeNext(url.searchParams.get('next'));
-  const silent = false;
   const origin = originOf(request);
   if (!clientId()) {
     return NextResponse.redirect(`${origin}/?error=not_configured`);
@@ -21,8 +20,9 @@ export async function GET(request) {
   const redirectUri = `${origin}/api/auth/callback`;
   // ?social=1 also asks for Jace's "messages" permission, so designs can be shared to Jace Social chats.
   const scope = url.searchParams.get('social') === '1' ? 'profile email messages' : 'profile email';
+  // Jace always shows its permission screen ("Do you want Jace Design to access your Jace info?"), every time.
   const res = NextResponse.redirect(authorizeUrl({ redirectUri, state, scope }));
-  res.cookies.set('jd_oauth', sign({ state, next, silent, exp: Math.floor(Date.now() / 1000) + 600 }), {
+  res.cookies.set('jd_oauth', sign({ state, next, exp: Math.floor(Date.now() / 1000) + 600 }), {
     httpOnly: true, sameSite: 'lax', secure: origin.startsWith('https'), path: '/', maxAge: 600,
   });
   return res;

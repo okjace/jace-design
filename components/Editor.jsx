@@ -480,6 +480,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
       const d = designRef.current;
       const next = { ...d, pages: d.pages.map((p) => ({ ...p, elements: p.elements.map((e) => (e.type === 'text' && e.fontFamily === el.fontFamily ? measureText(e) : e)) })) };
       designRef.current = next;
+      remoteRef.current = true; // re-measuring text after a font loads isn't an edit: don't save for it
       setDesign(next);
     }).catch(() => {});
   }, []);
@@ -493,6 +494,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
       const d = designRef.current;
       const next = { ...d, pages: d.pages.map((p) => ({ ...p, elements: p.elements.map(fixEl) })) };
       designRef.current = next;
+      remoteRef.current = true; // just opening a design doesn't save it (that bumped other open windows)
       setDesign(next);
     });
   }, []);
@@ -547,7 +549,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
   const first = useRef(true);
   useEffect(() => {
     if (first.current) { first.current = false; return; }
-    if (remoteRef.current) { remoteRef.current = false; return; }
+    if (remoteRef.current) { remoteRef.current = false; return; } // not an edit (opened, fonts loaded, or someone else's changes)
     if (!lockedOut.current) saver.changed();
   }, [design, title]); // eslint-disable-line react-hooks/exhaustive-deps
 

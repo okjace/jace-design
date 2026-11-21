@@ -11,7 +11,7 @@ export async function GET(request) {
   const saved = verify(request.cookies.get('jd_oauth')?.value);
   const next = saved?.next || '/';
   const fail = (code) => {
-    const res = NextResponse.redirect(saved?.silent ? `${origin}${next}` : `${origin}/?error=${encodeURIComponent(code)}`);
+    const res = NextResponse.redirect(`${origin}/?error=${encodeURIComponent(code)}`);
     res.cookies.delete('jd_oauth');
     return res;
   };
