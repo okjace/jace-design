@@ -6,6 +6,7 @@ import Presenter from './Presenter';
 import ShareModal from './ShareModal';
 import AiHelper from './AiHelper';
 import ImageSearch from './ImageSearch';
+import PhotoLibrary from './PhotoLibrary';
 import ContextMenu from './ContextMenu';
 import SaveTemplate from './SaveTemplate';
 import { AccessLost, useAccessWatch } from './AccessWatch';
@@ -137,6 +138,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
   const [marquee, setMarquee] = useState(null); // the box being dragged to select
   const [editingId, setEditingId] = useState(null);
   const [panel, setPanel] = useState('templates');
+  const [photoSrc, setPhotoSrc] = useState('jace'); // Photos panel: Jace Photos or free web images
   const [zoom, setZoom] = useState(0.5);
   const [autoFit, setAutoFit] = useState(true);
   const [modal, setModal] = useState(null); // 'share' | 'download' | 'resize' | 'present'
@@ -1224,7 +1226,20 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
             </>
           ) : null}
 
-          {panel === 'photos' ? <ImageSearch onPick={pickPhoto} /> : null}
+          {panel === 'photos' ? (
+            <>
+              <div className="toggle-row" style={{ marginBottom: 8 }}>
+                <button className={`btn ${photoSrc === 'jace' ? 'active' : ''}`} onClick={() => setPhotoSrc('jace')}>📷 Jace Photos</button>
+                <button className={`btn ${photoSrc === 'web' ? 'active' : ''}`} onClick={() => setPhotoSrc('web')}>🌐 Free web images</button>
+              </div>
+              {photoSrc === 'jace' ? (
+                <>
+                  <PhotoLibrary compact onPick={(p, asBg) => pickPhoto({ full: `/api/photos/${p.id}?use=1`, title: p.title, creator: `@${p.username}`, license: 'Jace Photos', source: 'jace' }, asBg)} />
+                  <p className="small muted" style={{ marginTop: 10 }}>Photos shared by the community. <a href="/photos?tab=mine" target="_blank" rel="noreferrer" style={{ textDecoration: 'underline' }}>Upload your own</a> in your Photos tab.</p>
+                </>
+              ) : <ImageSearch onPick={pickPhoto} />}
+            </>
+          ) : null}
 
           {panel === 'icons' ? (
             <IconSearch color={design.textDefaults?.color || '#16181d'} onPick={(ic) => addEl(imageEl({ src: ic.src, icon: ic.icon, iconColor: ic.iconColor, w: 260 * k, h: 260 * k, fit: 'contain' }))} />

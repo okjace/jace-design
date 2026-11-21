@@ -5,6 +5,7 @@ import { one, q } from '@/lib/db';
 import Avatar from '@/components/Avatar';
 import DesignCard from '@/components/DesignCard';
 import FollowButton from '@/components/FollowButton';
+import PhotoLibrary from '@/components/PhotoLibrary';
 import { lighten, listCols } from '@/lib/preview';
 
 export const dynamic = 'force-dynamic';
@@ -22,7 +23,7 @@ export async function generateMetadata({ params }) {
 export default async function Profile({ params, searchParams }) {
   const { username } = await params;
   const sp = await searchParams;
-  const tab = sp?.tab === 'likes' ? 'likes' : 'designs';
+  const tab = ['likes', 'photos'].includes(sp?.tab) ? sp.tab : 'designs';
   const u = await find(username);
   if (!u) notFound();
   const me = await getUser();
@@ -36,7 +37,7 @@ export default async function Profile({ params, searchParams }) {
       [u.id]
     ),
     me && !isMe ? one('SELECT 1 AS x FROM follows WHERE follower_id = $1 AND following_id = $2', [me.id, u.id]) : null,
-    (tab === 'designs'
+    (tab === 'photos' ? Promise.resolve([]) : tab === 'designs'
       ? q(
         `SELECT d.id, d.title, d.width, d.height, ${listCols('d')}, d.visibility, (SELECT COUNT(*)::int FROM likes l WHERE l.design_id = d.id) AS likes
          FROM designs d WHERE d.owner_id = $1 AND d.visibility = 'public' AND NOT d.is_template ORDER BY d.created_at DESC LIMIT 120`, [u.id])
@@ -71,8 +72,13 @@ export default async function Profile({ params, searchParams }) {
       <div className="tabs">
         <Link className={`tab ${tab === 'designs' ? 'active' : ''}`} href={`/u/${encodeURIComponent(u.username)}`}>Designs</Link>
         <Link className={`tab ${tab === 'likes' ? 'active' : ''}`} href={`/u/${encodeURIComponent(u.username)}?tab=likes`}>Liked</Link>
+        <Link className={`tab ${tab === 'photos' ? 'active' : ''}`} href={`/u/${encodeURIComponent(u.username)}?tab=photos`}>📷 Photos</Link>
       </div>
-      {designs.length ? (
+      {tab === 'photos' ? (
+        isMe
+          ? <PhotoLibrary scope="mine" manage signedIn username={undefined} />
+          : <PhotoLibrary scope="user" username={u.username} signedIn={!!me} />
+      ) : designs.length ? (
         <div className="grid">
           {designs.map((d) => <DesignCard key={d.id} d={d} author={tab === 'likes' ? { username: d.username, name: d.name, picture: d.picture } : null} href={`/d/${d.id}`} />)}
         </div>

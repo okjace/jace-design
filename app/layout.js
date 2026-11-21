@@ -41,6 +41,7 @@ export default async function RootLayout({ children }) {
             <Link href="/">Home</Link>
             <Link href="/new">Create</Link>
             <Link href="/explore">Explore</Link>
+            <Link href="/photos">Photos</Link>
           </nav>
           <div className="navright">
             <ThemeToggle initial={theme} />

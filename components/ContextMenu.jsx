@@ -121,11 +121,21 @@ export default function ContextMenu({ x, y, el, page, pages = [], isSite = false
   const [pos, setPos] = useState({ left: x, top: y });
   const isText = el?.type === 'text';
 
+  // Keep the whole menu on screen, also when it grows (font lists loading, sections opening) or the window resizes.
   useLayoutEffect(() => {
     const m = ref.current;
-    if (!m) return;
-    const r = m.getBoundingClientRect();
-    setPos({ left: Math.max(8, Math.min(x, window.innerWidth - r.width - 8)), top: Math.max(8, Math.min(y, window.innerHeight - r.height - 8)) });
+    if (!m) return undefined;
+    const place = () => {
+      const r = m.getBoundingClientRect();
+      const left = Math.max(8, Math.min(x, window.innerWidth - r.width - 8));
+      const top = Math.max(8, Math.min(y, window.innerHeight - r.height - 8));
+      setPos((p) => (p.left === left && p.top === top ? p : { left, top }));
+    };
+    place();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(place) : null;
+    ro?.observe(m);
+    window.addEventListener('resize', place);
+    return () => { ro?.disconnect(); window.removeEventListener('resize', place); };
   }, [x, y, isText]);
 
   const closeRef = useRef(onClose);

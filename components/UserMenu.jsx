@@ -24,6 +24,7 @@ export default function UserMenu({ user }) {
           </div>
           <Link href={`/u/${encodeURIComponent(user.username)}`}>Your profile</Link>
           <Link href="/">Your designs</Link>
+          <Link href={`/u/${encodeURIComponent(user.username)}?tab=photos`}>📷 Your photos</Link>
           <Link href="/inbox">Inbox</Link>
           <Link href="/settings">Settings</Link>
           <a href="https://github.com/okjace/jace-design/releases/latest" target="_blank" rel="noreferrer">⬇ Desktop app</a>

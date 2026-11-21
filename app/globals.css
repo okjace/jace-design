@@ -339,7 +339,7 @@ h3 { font-size: 16px; margin: 0 0 8px; }
 
 /* ---------- right-click menu ---------- */
 .ctx-menu {
-  position: fixed; z-index: 400; width: 250px; max-height: calc(100vh - 16px); overflow-y: auto;
+  position: fixed; z-index: 400; width: min(250px, calc(100vw - 16px)); max-height: calc(100dvh - 16px); overflow-y: auto; overscroll-behavior: contain;
   background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 12px;
   box-shadow: 0 16px 40px rgba(0,0,0,.22); padding: 6px; font-size: 13.5px;
 }
@@ -425,7 +425,7 @@ h3 { font-size: 16px; margin: 0 0 8px; }
 .font-check { color: var(--brand); font-size: 13px; margin-left: 6px; }
 
 /* Wider right-click menu for text */
-.ctx-menu.wide { width: 310px; }
+.ctx-menu.wide { width: min(310px, calc(100vw - 16px)); }
 .ctx-toolbar { gap: 2px; padding-top: 4px; border-bottom: 1px solid var(--line); padding-bottom: 6px; margin-bottom: 2px; }
 .ctx-icon { min-width: 30px; height: 30px; padding: 0 6px; border: 1px solid transparent; background: none; border-radius: 8px; cursor: pointer; font-size: 14px; color: var(--text); }
 .ctx-icon:hover { background: var(--panel-2); }
@@ -610,3 +610,12 @@ h3 { font-size: 16px; margin: 0 0 8px; }
 .terms-notice { position: fixed; left: 16px; bottom: 16px; z-index: 950; max-width: min(360px, calc(100vw - 32px)); padding: 10px 14px; border-radius: 12px; background: var(--panel); color: var(--text); border: 1px solid var(--line); box-shadow: 0 8px 28px rgba(0,0,0,.18); font-size: 13px; line-height: 1.4; animation: terms-in .25s ease-out; }
 .terms-notice:hover { border-color: var(--brand); }
 @keyframes terms-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+/* Jace Photos */
+.photo-lib { display: flex; flex-direction: column; gap: 10px; }
+.photo-lib:not(.compact) .photo-grid { columns: 5 220px; column-gap: 12px; }
+.photo-lib:not(.compact) .photo { margin-bottom: 12px; }
+.photo .tile { position: relative; }
+.photo-private { position: absolute; top: 6px; left: 6px; background: rgba(0,0,0,.55); color: #fff; font-size: 11px; padding: 2px 6px; border-radius: 99px; }
+.photo-upload { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 14px; border: 2px dashed var(--line); border-radius: 12px; background: var(--panel); }
+@media (hover: none) { .photo-bg { opacity: 1; } }
