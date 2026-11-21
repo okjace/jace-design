@@ -1,7 +1,7 @@
 """Jace Design desktop app - the Jace Design website in its own window, with a self-installer and updates."""
 
 APP_NAME = "Jace Design"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 AUTHOR = "jace.deb"
 GITHUB_REPO = "okjace/jace-design"
 GITHUB_URL = f"https://github.com/{GITHUB_REPO}"

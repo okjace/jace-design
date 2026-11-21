@@ -20,8 +20,27 @@
   --ed-top: #16181d;
   color-scheme: light;
 }
+/* Dark theme: when chosen (data-theme="dark"), or when the system is dark and "System" is chosen. */
+:root[data-theme="dark"] {
+  --bg: #111317;
+  --panel: #1c1f26;
+  --panel-2: #23272f;
+  --text: #e6e8eb;
+  --muted: #8b919c;
+  --line: #2a2f38;
+  --brand: #3ddc84;
+  --brand-hover: #5ae69a;
+  --brand-2: #1f9d5a;
+  --on-brand: #0c1410;
+  --brand-soft: #16301f;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .3);
+  --canvas-bg: #0c0e11;
+  --hero: linear-gradient(135deg, #17653e, #114d30 55%, #0c3622);
+  --ed-top: #1c1f26;
+  color-scheme: dark;
+}
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #111317;
     --panel: #1c1f26;
     --panel-2: #23272f;

@@ -343,6 +343,31 @@ def self_test(app) -> int:
     return code
 
 
+def system_is_dark(app) -> bool:
+    """Is the computer in dark mode? (Qt 6.5+ reads it from Windows, macOS, GNOME/KDE and the desktop portal.)"""
+    try:
+        return app.styleHints().colorScheme() == Qt.ColorScheme.Dark
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def chromium_flags(app) -> None:
+    """Options for the built-in browser. Must be set before the first web page is created."""
+    flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "").split()
+    # Linux: Qt 6.9's GPU compositing can leave the page blank ("Backend texture is not a Vulkan texture"
+    # on Intel / Mesa under Wayland). Drawing the page on the CPU always works and is plenty fast here.
+    # Set JACE_DESIGN_GPU=1 to try the GPU anyway.
+    if sys.platform.startswith("linux") and os.environ.get("JACE_DESIGN_GPU") != "1":
+        flags += ["--disable-gpu", "--disable-gpu-compositing"]
+    # Tell websites (prefers-color-scheme) about the system's dark mode, like a normal browser does.
+    # 0 = dark, 1 = light in Chromium's preferred-color-scheme setting.
+    dark = system_is_dark(app)
+    flags.append(f"--blink-settings=preferredColorScheme={0 if dark else 1}")
+    if dark:
+        flags.append("--force-dark-mode")
+    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = " ".join(dict.fromkeys(flags))
+
+
 def main():
     if desktop.handle_cli(sys.argv[1:]):
         return
@@ -351,7 +376,10 @@ def main():
     QApplication.setDesktopFileName(desktop.APP_ID)
     # Sharper rendering and no flicker on HiDPI screens
     QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+    # Qt WebEngine needs this set before the application object exists.
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     app = QApplication(sys.argv)
+    chromium_flags(app)
     app.setStyle("Fusion")
     app.setStyleSheet(STYLE)
     app.setWindowIcon(QIcon(str(desktop.ICON_SRC)))

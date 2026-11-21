@@ -10,6 +10,7 @@ import ContextMenu from './ContextMenu';
 import SaveTemplate from './SaveTemplate';
 import { AccessLost, useAccessWatch } from './AccessWatch';
 import VideoPlayer from './VideoPlayer';
+import LinkPicker, { linkLabel, sectionAnchor } from './LinkPicker';
 import {
   EMOJI, FONTS, GRADIENTS, PRESET_GROUPS, SWATCHES, blankPage, emojiEl, imageEl, lineEl, normalizeDesign,
   scalePage, shapeEl, textEl, textFont, textHeight, uid, wrapText, ANIMATIONS, videoLength,
@@ -1165,7 +1166,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
         <div className="ed-side">
           {sel ? (
             <Props
-              el={sel} update={updateSel} k={k} fonts={fontList} colors={colors} isVideo={isVideo}
+              el={sel} update={updateSel} k={k} fonts={fontList} colors={colors} isVideo={isVideo} isSite={isSite} pages={design.pages}
               onPreview={() => setModal('play')}
               onFont={(e) => loadFont(e)}
               actions={{ deleteSel, duplicateSel, reorder, alignSel, replace: () => replaceRef.current?.click(), setBg: () => toBackground(sel), aiText: () => setAi('text') }}
@@ -1211,7 +1212,20 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
                   <div className="prop">
                     <label style={{ gridColumn: 'span 2' }}>Section name (shown in the site menu)
                       <input value={page.anchor || ''} placeholder="e.g. about"
-                        onChange={(e) => commit((d) => mapPage(d, (p) => ({ ...p, anchor: e.target.value.replace(/[^\w-]/g, '-').slice(0, 40) })), { history: false })} />
+                        onChange={(e) => {
+                          const name = e.target.value.replace(/[^\w-]/g, '-').slice(0, 40);
+                          // Keep links to this page working when it's renamed.
+                          const from = `#${sectionAnchor(page, pi)}`;
+                          const to = `#${sectionAnchor({ anchor: name }, pi)}`;
+                          commit((d) => ({
+                            ...d,
+                            pages: d.pages.map((p, i) => ({
+                              ...p,
+                              ...(i === pi ? { anchor: name } : {}),
+                              elements: p.elements.map((el) => (el.link === from ? { ...el, link: to } : el)),
+                            })),
+                          }), { history: false });
+                        }} />
                     </label>
                     <label style={{ gridColumn: 'span 2' }}>Website title
                       <input value={design.site?.title || ''} placeholder={title}
@@ -1379,7 +1393,7 @@ function ResizeMenu({ W, H, onApply, onCopy, onClose }) {
   );
 }
 
-function Props({ el, update, actions, onFont, k, fonts = FONTS, colors = [], isVideo, onPreview }) {
+function Props({ el, update, actions, onFont, k, fonts = FONTS, colors = [], isVideo, onPreview, isSite, pages = [] }) {
   const f = el.filters || {};
   const sh = el.shadow || {};
   const an = el.anim || {};
@@ -1535,10 +1549,8 @@ function Props({ el, update, actions, onFont, k, fonts = FONTS, colors = [], isV
         </>
       ) : null}
 
-      <h4>Link</h4>
-      <input className="input" placeholder="https://… (opens when clicked on the website / viewer)" value={el.link || ''}
-        onChange={(e) => update({ link: e.target.value.slice(0, 500) })} style={{ fontSize: 13 }} />
-      {el.link && !/^(https?:\/\/|mailto:|#)/i.test(el.link) ? <div className="small" style={{ color: 'var(--danger)' }}>Links must start with https://, mailto: or #section</div> : null}
+      <h4>{isSite ? 'When clicked, go to' : 'Link'}</h4>
+      <LinkPicker value={el.link || ''} onChange={(link) => update({ link })} pages={pages} isSite={isSite} />
 
       <h4>Look</h4>
       <Range label="Transparency" min={0} max={100} value={Math.round((1 - (el.opacity ?? 1)) * 100)} onChange={(v) => update({ opacity: 1 - v / 100 })} suffix="%" />
