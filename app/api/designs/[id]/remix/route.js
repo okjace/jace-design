@@ -1,7 +1,7 @@
 import { after } from 'next/server';
 import { handler, json, newId, requireUser, siteUrl } from '@/lib/auth';
 import { q } from '@/lib/db';
-import { loadDesign } from '@/lib/access';
+import { loadDesign, shareDefaults } from '@/lib/access';
 import { emailUser } from '@/lib/jace';
 
 export const POST = handler(async (_req, { params }) => {
@@ -12,9 +12,12 @@ export const POST = handler(async (_req, { params }) => {
   const nid = newId();
   const mine = design.owner_id === user.id;
   const title = design.is_template ? design.title : mine ? `${design.title} (copy)` : `Remix of ${design.title}`;
+  const def = shareDefaults(user);
   await q(
-    'INSERT INTO designs (id, owner_id, title, width, height, data, remix_of) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7)',
-    [nid, user.id, title.slice(0, 120), design.width, design.height, JSON.stringify(design.data), mine ? null : id]
+    `INSERT INTO designs (id, owner_id, title, width, height, data, remix_of, thumb, visibility, link_perms, require_request)
+     VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7, $8, $9, $10::text::jsonb, $11)`,
+    [nid, user.id, title.slice(0, 120), design.width, design.height, JSON.stringify(design.data), mine ? null : id, design.thumb || null,
+      def.visibility, JSON.stringify(def.link_perms), def.require_request]
   );
   if (!mine && !design.is_template) {
     const base = await siteUrl();

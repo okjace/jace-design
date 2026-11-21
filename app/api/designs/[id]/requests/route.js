@@ -15,13 +15,24 @@ async function list(id) {
   );
 }
 
-// Owner: see pending requests.
+// Guests (no Jace account) the owner has let in.
+async function guests(id) {
+  return q(
+    `SELECT DISTINCT ON (guest_token) id, guest_name, perms, created_at FROM access_requests
+     WHERE design_id = $1 AND guest_token IS NOT NULL AND status = 'approved'
+     ORDER BY guest_token, created_at DESC`,
+    [id]
+  );
+}
+
+// Owner: see pending requests and approved guests.
 export const GET = handler(async (_req, { params }) => {
   const { id } = await params;
   const user = await requireUser();
   const { design, role } = await loadDesign(id, user);
   if (!design || role !== 'owner') return json({ error: 'Not found' }, 404);
-  return json({ requests: await list(id) });
+  const [requests, approvedGuests] = await Promise.all([list(id), guests(id)]);
+  return json({ requests, guests: approvedGuests });
 });
 
 // Anyone: ask for access.
@@ -65,6 +76,13 @@ export const PATCH = handler(async (request, { params }) => {
   const r = await one('SELECT * FROM access_requests WHERE id = $1 AND design_id = $2', [String(body.request_id), id]);
   if (!r) return json({ error: 'Request not found' }, 404);
   const base = await siteUrl();
+  // Change or remove an approved guest's access.
+  if (body.action === 'update' || body.action === 'revoke') {
+    if (body.action === 'revoke') await q(`UPDATE access_requests SET status = 'revoked' WHERE id = $1`, [r.id]);
+    else await q(`UPDATE access_requests SET perms = $2::text::jsonb WHERE id = $1`, [r.id, JSON.stringify(cleanPerms(body.perms, PRESETS.view))]);
+    const [requests, approvedGuests] = await Promise.all([list(id), guests(id)]);
+    return json({ requests, guests: approvedGuests });
+  }
   if (body.action === 'deny') {
     await q(`UPDATE access_requests SET status = 'denied' WHERE id = $1`, [r.id]);
   } else {
@@ -86,5 +104,6 @@ export const PATCH = handler(async (request, { params }) => {
       }));
     }
   }
-  return json({ requests: await list(id) });
+  const [requests, approvedGuests] = await Promise.all([list(id), guests(id)]);
+  return json({ requests, guests: approvedGuests });
 });

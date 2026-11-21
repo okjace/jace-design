@@ -61,6 +61,7 @@ export default function ShareModal({ id, title, role, visibility, onVisibility, 
   const [copied, setCopied] = useState('');
   const [shares, setShares] = useState([]);
   const [requests, setRequests] = useState([]);
+  const [guests, setGuests] = useState([]);
   const [username, setUsername] = useState('');
   const [perms, setPerms] = useState({ ...PRESETS.view });
   const [note, setNote] = useState('');
@@ -77,10 +78,11 @@ export default function ShareModal({ id, title, role, visibility, onVisibility, 
     setBase(location.origin);
     if (owner) {
       fetch(`/api/designs/${id}/shares`).then((r) => r.json()).then((d) => setShares(d.shares || [])).catch(() => {});
-      fetch(`/api/designs/${id}/requests`).then((r) => r.json()).then((d) => setRequests(d.requests || [])).catch(() => {});
+      fetch(`/api/designs/${id}/requests`).then((r) => r.json()).then((d) => { setRequests(d.requests || []); setGuests(d.guests || []); }).catch(() => {});
       fetch(`/api/designs/${id}`).then((r) => r.json()).then((d) => {
         setLinkPerms(d.design?.link_perms || PRESETS.comment);
         setRequireRequest(!!d.design?.require_request);
+        if (d.design?.default_person_perms) setPerms(d.design.default_person_perms);
       }).catch(() => {});
     }
     fetch('/api/social/contacts').then((r) => (r.ok ? r.json() : { connected: false, reason: 'signin' })).then(setSocial).catch(() => setSocial({ connected: false }));
@@ -116,9 +118,15 @@ export default function ShareModal({ id, title, role, visibility, onVisibility, 
   async function answer(req, action, p) {
     const r = await fetch(`/api/designs/${id}/requests`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ request_id: req.id, action, role: presetOf(p), perms: p }) });
     if (r.ok) {
-      setRequests((await r.json()).requests);
-      fetch(`/api/designs/${id}/shares`).then((x) => x.json()).then((d) => setShares(d.shares || []));
+      const d = await r.json();
+      setRequests(d.requests || []);
+      setGuests(d.guests || []);
+      fetch(`/api/designs/${id}/shares`).then((x) => x.json()).then((x) => setShares(x.shares || []));
     }
+  }
+  async function guestAction(g, action, p) {
+    const r = await fetch(`/api/designs/${id}/requests`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ request_id: g.id, action, perms: p }) });
+    if (r.ok) { const d = await r.json(); setRequests(d.requests || []); setGuests(d.guests || []); }
   }
   async function sendSocial() {
     setSocialMsg(null);
@@ -187,11 +195,20 @@ export default function ShareModal({ id, title, role, visibility, onVisibility, 
                 <div><button className="btn" type="submit">Share & email them</button></div>
               </form>
               {msg ? <div className={`notice ${msg.err ? 'err' : 'ok'}`} style={{ marginTop: 10, marginBottom: 0 }}>{msg.text}</div> : null}
-              {shares.length ? (
-                <div className="stack" style={{ marginTop: 10, gap: 8 }}>
+              {shares.length || guests.length ? (
+                <div className="stack" style={{ marginTop: 14, gap: 10 }}>
+                  <b className="small">People with access ({shares.length + guests.length})</b>
                   {shares.map((s) => <ShareRow key={s.user_id} s={s} onChange={changeShare} onRemove={removeShare} />)}
+                  {guests.map((g) => (
+                    <ShareRow
+                      key={`g${g.id}`}
+                      s={{ name: g.guest_name || 'Guest', perms: g.perms, guest: true }}
+                      onChange={(_s, p) => guestAction(g, 'update', p)}
+                      onRemove={() => guestAction(g, 'revoke')}
+                    />
+                  ))}
                 </div>
-              ) : null}
+              ) : <div className="small muted" style={{ marginTop: 8 }}>Nobody else has been added yet.</div>}
             </div>
           ) : null}
 
@@ -263,15 +280,19 @@ function ShareRow({ s, onChange, onRemove }) {
   const [open, setOpen] = useState(false);
   const p = s.perms || PRESETS[s.role] || PRESETS.view;
   const label = { view: 'Can view', comment: 'Can comment', edit: 'Can edit', custom: 'Custom' }[presetOf(p)];
+  const can = PERM_LABELS.filter(([k]) => p[k]).map(([, l]) => l.replace(' / remix', ''));
   return (
-    <div className="stack" style={{ gap: 6 }}>
+    <div className="stack" style={{ gap: 6, padding: 8, border: '1px solid var(--line)', borderRadius: 10 }}>
       <div className="row">
-        <Avatar user={s} size={28} />
-        <div className="grow"><b>{s.name}</b> <span className="muted small">@{s.username}</span></div>
-        <button className="btn btn-sm" onClick={() => setOpen(!open)}>{label} ▾</button>
-        <button className="btn btn-ghost btn-sm" onClick={() => onRemove(s.user_id)} title="Remove">✕</button>
+        <Avatar user={s} size={30} />
+        <div className="grow" style={{ minWidth: 0 }}>
+          <div><b>{s.name}</b> <span className="muted small">{s.guest ? 'guest, no Jace account' : `@${s.username}`}</span></div>
+          <div className="small muted" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{can.join(' · ') || 'No access'}</div>
+        </div>
+        <button className={`btn btn-sm ${open ? 'active' : ''}`} onClick={() => setOpen(!open)} title="Change what this person can do">{label} ▾</button>
+        <button className="btn btn-ghost btn-sm" onClick={() => onRemove(s.user_id)} title="Remove access">✕</button>
       </div>
-      {open ? <div style={{ paddingLeft: 36 }}><PermPicker value={p} onChange={(np) => onChange(s, np)} compact /></div> : null}
+      {open ? <div style={{ paddingLeft: 38 }}><PermPicker value={p} onChange={(np) => onChange(s, np)} compact /></div> : null}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import Avatar from './Avatar';
+import { PermPicker } from './ShareModal';
 
 const REASONS = {
   no_email: "Your Jace account doesn't have a confirmed email yet. Add one in your Jace account settings.",
@@ -12,7 +13,45 @@ const REASONS = {
   invalid_client: 'Jace rejected the app’s client ID or secret.',
 };
 
-export default function SettingsForm({ user, configured }) {
+function SharingDefaults({ initial }) {
+  const [d, setD] = useState(initial);
+  const [msg, setMsg] = useState('');
+  async function save(next) {
+    setD(next);
+    setMsg('Saving…');
+    const r = await fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ share_defaults: next }) });
+    setMsg(r.ok ? 'Saved ✓' : 'Could not save');
+  }
+  return (
+    <div className="card stack" style={{ gap: 14 }}>
+      <h3 style={{ margin: 0 }}>🔐 Default sharing</h3>
+      <p className="muted small" style={{ margin: 0 }}>Every new design and document starts with these settings. You can still change them for each design in its Share window.</p>
+      <div className="stack" style={{ gap: 6 }}>
+        <b className="small">Who can find new designs</b>
+        <div className="seg">
+          {[['private', 'Private', 'Only you and people you add'], ['link', 'Anyone with link', 'Not on your profile'], ['public', 'Public', 'On your profile & Explore']].map(([v, t, s]) => (
+            <button key={v} type="button" className={d.visibility === v ? 'active' : ''} onClick={() => save({ ...d, visibility: v })}><b>{t}</b><span>{s}</span></button>
+          ))}
+        </div>
+      </div>
+      <div className="stack" style={{ gap: 6 }}>
+        <b className="small">People with the link can</b>
+        <PermPicker value={d.link_perms} onChange={(p) => save({ ...d, link_perms: p })} />
+        <label className="row small" style={{ gap: 6 }}>
+          <input type="checkbox" checked={d.require_request} onChange={(e) => save({ ...d, require_request: e.target.checked })} />
+          Make them ask me first
+        </label>
+      </div>
+      <div className="stack" style={{ gap: 6 }}>
+        <b className="small">People I add by username get</b>
+        <PermPicker value={d.person_perms} onChange={(p) => save({ ...d, person_perms: p })} />
+      </div>
+      {msg ? <div className="small muted">{msg}</div> : null}
+    </div>
+  );
+}
+
+export default function SettingsForm({ user, configured, defaults }) {
   const [bio, setBio] = useState(user.bio || '');
   const [website, setWebsite] = useState(user.website || '');
   const [notify, setNotify] = useState(user.email_notify);
@@ -54,6 +93,8 @@ export default function SettingsForm({ user, configured }) {
         <label className="field">Website<input className="input" maxLength={200} value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="https://…" /></label>
         <div className="row"><button className="btn btn-primary">Save profile</button>{status ? <span className={status.err ? 'btn-danger' : 'muted'}>{status.text}</span> : null}</div>
       </form>
+
+      {defaults ? <SharingDefaults initial={defaults} /> : null}
 
       <div className="card stack">
         <h3 style={{ margin: 0 }}>📧 Emails</h3>
