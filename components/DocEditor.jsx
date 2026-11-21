@@ -185,7 +185,7 @@ export default function DocEditor({ id, initialDesign, initialTitle, initialVisi
   }
   async function insertPhoto(r) {
     setModal(null);
-    const blob = await (await fetch(`/api/images/${r.id}`)).blob();
+    const blob = await (await fetch(r.full || `/api/images/${r.id}?full=1`)).blob();
     const { src } = await fileToDataUrl(blob, 1400);
     insertHtml(`<img src="${src}" alt="${(r.title || '').replace(/"/g, '')}">`);
   }

@@ -294,7 +294,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
   async function pickPhoto(r, asBackground) {
     setBusy('Adding photo…');
     try {
-      const blob = await (await fetch(`/api/images/${r.id}`)).blob();
+      const blob = await (await fetch(r.full || `/api/images/${r.id}?full=1`)).blob();
       if (!blob.type.startsWith('image/')) throw new Error('That image is not available.');
       const a = { id: uid(), ...(await fileToDataUrl(blob, 1800)), credit: `${r.title || 'Photo'}${r.creator ? ` by ${r.creator}` : ''} (${r.license})`, source: r.source };
       commit((d) => ({ ...d, assets: [a, ...(d.assets || [])] }));
