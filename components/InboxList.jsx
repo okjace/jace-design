@@ -21,13 +21,13 @@ export default function InboxList({ initial }) {
   const [items, setItems] = useState(initial);
   const [filter, setFilter] = useState('all');
 
-  // Keep the inbox fresh while it's open.
+  // Live: reload the list the moment the bell's connection says something changed
+  // (plus a slow safety-net refresh in case live updates are blocked).
   useEffect(() => {
-    const t = setInterval(() => {
-      if (document.hidden) return;
-      fetch('/api/inbox', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).then((d) => d && setItems(d.items)).catch(() => {});
-    }, 8000);
-    return () => clearInterval(t);
+    const reload = () => fetch('/api/inbox', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).then((d) => d && setItems(d.items)).catch(() => {});
+    const t = setInterval(() => { if (!document.hidden) reload(); }, 45000);
+    window.addEventListener('jd-inbox-changed', reload);
+    return () => { clearInterval(t); window.removeEventListener('jd-inbox-changed', reload); };
   }, []);
 
   async function send(body, optimistic) {
