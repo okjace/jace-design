@@ -14,15 +14,15 @@ const sessId = () => {
 /**
  * Live updates for the design editor. Nothing is sent or redrawn unless something changed:
  *  - your cursor/selection is sent only when it moves (at most ~3 times a second), plus a check-in every 20 s;
- *  - a quick read-only check (every 2 s while others are here, every 5 s when you're alone) says whether
- *    anyone moved or saved; the editor only updates when the answer is different.
+ *  - a quick read-only check (under a second apart while others are here, every 3 s when you're alone) says
+ *    whether anyone moved or saved, and brings their new version along; the editor only updates when it changed.
  * posRef.current = { x, y } in design units (or null); selRef.current = selected element id.
  */
-export function useLive({ id, on, page, posRef, selRef, saver, onRemote }) {
+export function useLive({ id, on, share, page, posRef, selRef, saver, onRemote }) {
   const [people, setPeople] = useState([]);
   const [color, setColor] = useState('');
   const state = useRef({});
-  state.current = { page, saver, onRemote };
+  state.current = { page, saver, onRemote, share };
 
   useEffect(() => {
     if (!on) { setPeople([]); return undefined; }
@@ -37,7 +37,11 @@ export function useLive({ id, on, page, posRef, selRef, saver, onRemote }) {
       alone = !(d.people || []).length;
       if (d.color) setColor((c) => (c === d.color ? c : d.color));
       const sv = state.current.saver;
-      // Someone saved: if we have nothing unsaved, load their version (if we do, saving merges it in).
+      // Someone saved: if we have nothing unsaved, show their version right away (if we do, saving merges it in).
+      if (d.version && sv && d.version !== sv.version() && d.design && !sv.hasUnsaved() && sv.state === 'saved') {
+        state.current.onRemote?.(d.design.data, d.design.title, d.version);
+        return;
+      }
       if (d.version && sv && d.version !== sv.version() && !sv.hasUnsaved() && sv.state === 'saved' && !pulling) {
         pulling = true;
         try {
@@ -59,8 +63,9 @@ export function useLive({ id, on, page, posRef, selRef, saver, onRemote }) {
     const watchMoves = () => {
       if (stop) return;
       if (!document.hidden) {
-      const pos = posRef.current;
-        const body = { sess, page: state.current.page, x: pos ? Math.round(pos.x) : null, y: pos ? Math.round(pos.y) : null, sel: selRef.current || null };
+        // With cursors off, others only learn that you're here (so updates stay quick), not where you point.
+        const pos = state.current.share ? posRef.current : null;
+        const body = { sess, page: state.current.page, x: pos ? Math.round(pos.x) : null, y: pos ? Math.round(pos.y) : null, sel: state.current.share ? selRef.current || null : null };
         const sig = JSON.stringify(body);
         const now = Date.now();
         if (sig !== lastSent || now - lastSentAt > 20_000) { lastSent = sig; lastSentAt = now; post(body); }
@@ -71,17 +76,18 @@ export function useLive({ id, on, page, posRef, selRef, saver, onRemote }) {
     // Others: a cheap read, more often only when someone else is here.
     const check = async () => {
       if (stop) return;
-      if (!document.hidden && Date.now() - lastSentAt > 1500) {
+      if (!document.hidden) {
         try {
-          const r = await fetch(`/api/designs/${id}/presence?sess=${sess}`, { cache: 'no-store' });
+          const v = state.current.saver?.version() || '';
+          const r = await fetch(`/api/designs/${id}/presence?sess=${sess}&v=${encodeURIComponent(v)}`, { cache: 'no-store' });
           if (r.ok) await apply(await r.json());
         } catch {}
       }
-      if (!stop) checkTimer = setTimeout(check, alone ? 5000 : 2000);
+      if (!stop) checkTimer = setTimeout(check, alone ? 3000 : 800);
     };
 
     watchMoves();
-    checkTimer = setTimeout(check, 2000);
+    checkTimer = setTimeout(check, 800);
     const bye = () => {
       try { navigator.sendBeacon?.(`/api/designs/${id}/presence`, new Blob([JSON.stringify({ sess, leave: true })], { type: 'application/json' })); } catch {}
     };

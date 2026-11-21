@@ -154,7 +154,11 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
   const [pen, setPen] = useState(null); // { color, width } while the pen is on
   const [stroke, setStroke] = useState(null); // the line being drawn right now
   const [brand, saveBrand] = useBrand();
-  const live = true; // always in sync: others' cursors and saved changes show up by themselves
+  const live = true; // always in sync: others' saved changes show up by themselves
+  // Seeing and sharing cursors is off unless you turn it on (remembered in this browser).
+  const [cursors, setCursors] = useState(false);
+  useEffect(() => { try { setCursors(localStorage.getItem('jd_cursors') === '1'); } catch {} }, []);
+  const toggleCursors = () => setCursors((v) => { try { localStorage.setItem('jd_cursors', v ? '0' : '1'); } catch {} if (v) posRef.current = null; return !v; });
   const posRef = useRef(null); // your cursor, in design units (for live cursors)
   const selRef = useRef(null);
   const remoteRef = useRef(false); // true while loading someone else's saved changes (don't save them back)
@@ -575,7 +579,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
 
   // ---------- live cursors + live updates ----------
   const { people } = useLive({
-    id, on: live && !lost, page: pi, posRef, selRef, saver,
+    id, on: live && !lost, share: cursors, page: pi, posRef, selRef, saver,
     onRemote: (data, newTitle, v) => {
       remoteRef.current = true;
       const d = normalizeDesign(data);
@@ -1118,6 +1122,10 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
             {people.slice(0, 5).map((p) => <span key={p.sess} title={`${p.name}${p.page !== pi ? ` (page ${p.page + 1})` : ''}`} style={{ background: p.color }}>{(p.name || '?').slice(0, 1).toUpperCase()}</span>)}
           </div>
         ) : null}
+        <button className={`btn btn-sm ${cursors ? 'active' : ''}`} onClick={toggleCursors}
+          title={cursors ? 'Cursors on: you see others’ cursors and they see yours. Click to turn off.' : 'Show cursors: see where others are pointing (and share yours)'}>
+          🖱{cursors ? ' Cursors on' : ''}
+        </button>
         <button className="btn btn-sm" onClick={() => setModal('history')} title="Version history">🕘</button>
         {isSite ? <button className="btn btn-sm" onClick={async () => { await saveNow(); window.open(`/s/${id}`, '_blank'); }}>🌐 View site</button> : null}
         {isVideo
@@ -1498,7 +1506,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
           >
             <div className="ed-canvas-wrap" ref={wrapRef} style={{ width: W * zoom, height: H * zoom, background: page.background?.type === 'none' ? 'repeating-conic-gradient(#ddd 0 25%, #fff 0 50%) 0 0 / 20px 20px' : undefined }}
               onPointerDown={onCanvasDown} onDoubleClick={onCanvasDouble}
-              onPointerMove={(e) => { if (live) posRef.current = toDesign(e); }}
+              onPointerMove={(e) => { if (cursors) posRef.current = toDesign(e); }}
               onPointerLeave={() => { posRef.current = null; }}
               onContextMenu={(e) => {
                 e.preventDefault();
@@ -1511,7 +1519,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
               {guides.map((g, i) => (
                 <div key={i} className="guide" style={g.v ? { left: g.at * zoom, top: 0, width: 1, height: H * zoom } : { top: g.at * zoom, left: 0, height: 1, width: W * zoom }} />
               ))}
-              {live ? <LiveLayer people={people} page={pi} zoom={zoom} elements={page.elements} /> : null}
+              {cursors ? <LiveLayer people={people} page={pi} zoom={zoom} elements={page.elements} /> : null}
               {pen ? <div className="pen-layer" title="Drawing with the pen (Esc to stop)" /> : null}
               {stroke ? (
                 <svg className="pen-live" viewBox={`0 0 ${W} ${H}`} width={W * zoom} height={H * zoom}>

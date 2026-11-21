@@ -24,7 +24,7 @@ async function check(params) {
   const user = await requireUser();
   const { design, role } = await loadDesign(id, user);
   if (!design || !canEdit(role)) return { error: json({ error: 'Not found' }, 404) };
-  return { id, user };
+  return { id, user, design };
 }
 
 // A quick look (only reads): has anything changed? The editor asks every couple of seconds and
@@ -32,7 +32,15 @@ async function check(params) {
 export const GET = handler(async (request, ctx) => {
   const c = await check(ctx.params);
   if (c.error) return c.error;
-  return json(await snapshot(c.id, cleanSess(new URL(request.url).searchParams.get('sess'))));
+  const sp = new URL(request.url).searchParams;
+  const snap = await snapshot(c.id, cleanSess(sp.get('sess')));
+  // If the editor's version is out of date, send the new design along (saves a second trip).
+  const have = sp.get('v') || '';
+  if (have && snap.version && have !== snap.version) {
+    const cur = await one('SELECT data, title, updated_at::text AS v FROM designs WHERE id = $1', [c.id]);
+    if (cur) { snap.version = cur.v; snap.design = { data: cur.data, title: cur.title }; }
+  }
+  return json(snap);
 });
 
 // Your cursor/selection moved (sent only when it changes, plus a check-in every 20 s), or you left.
