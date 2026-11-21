@@ -205,7 +205,7 @@ export default function CreateHub() {
               const d = previews[t.id];
               return (
                 <button key={t.id} className="dcard" style={{ border: 0, background: 'none', padding: 0, cursor: 'pointer', textAlign: 'left' }} disabled={busy} onClick={() => createFrom(t.name, templateDesign(t))}>
-                  <div className="thumb"><DesignPage design={d} page={d.pages[0]} width={undefined} height="100%" uidPrefix={`tpl${t.id}-`} /></div>
+                  <div className="thumb"><DesignPage design={d} page={d.pages[0]} width="100%" height="100%" uidPrefix={`tpl${t.id}-`} /></div>
                   <span className="dcard-title">{t.name}</span>
                   <span className="dcard-meta">{t.category} · {d.pages.length > 1 ? `${d.pages.length} pages` : `${t.width} × ${t.height}`}</span>
                 </button>

@@ -4,12 +4,32 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import DesignPage from './DesignPage';
 import Presenter from './Presenter';
 import ShareModal from './ShareModal';
+import AiHelper from './AiHelper';
+import ImageSearch from './ImageSearch';
+import ContextMenu from './ContextMenu';
+import SaveTemplate from './SaveTemplate';
 import {
   EMOJI, FONTS, GRADIENTS, PRESET_GROUPS, SWATCHES, blankPage, emojiEl, imageEl, lineEl, normalizeDesign,
   scalePage, shapeEl, textEl, textFont, textHeight, uid, wrapText,
 } from '@/lib/design';
 import { TEMPLATES, templateDesign } from '@/lib/templates';
 import { ensureFonts, exportImage, exportJson, exportPdf, exportSvg, fileToDataUrl } from '@/lib/export';
+import { fontFileToDataUrl, loadFontFile, loadGoogleFont, registerFonts } from '@/lib/fonts';
+import { aiToPages, aiToPalette, extractJson, fillAiImages, stripFences } from '@/lib/ai';
+
+const BLENDS = ['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge', 'color-burn', 'hard-light', 'soft-light', 'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity'];
+const FOCUS = [['xMinYMin', '↖'], ['xMidYMin', '↑'], ['xMaxYMin', '↗'], ['xMinYMid', '←'], ['xMidYMid', '•'], ['xMaxYMid', '→'], ['xMinYMax', '↙'], ['xMidYMax', '↓'], ['xMaxYMax', '↘']];
+
+/** Every color used in the design, most-used first (for quick reuse). */
+function designColors(design) {
+  const count = new Map();
+  const add = (c) => { if (typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c)) count.set(c.toLowerCase(), (count.get(c.toLowerCase()) || 0) + 1); };
+  for (const p of design.pages) {
+    add(p.background?.color); add(p.background?.from); add(p.background?.to);
+    for (const e of p.elements) { add(e.color); add(e.fill); add(e.gradient); add(e.stroke); add(e.bgColor); }
+  }
+  return [...count.entries()].sort((a, b) => b[1] - a[1]).map(([c]) => c).slice(0, 14);
+}
 
 // ---------- text measuring ----------
 let measureCtx = null;
@@ -25,8 +45,10 @@ const fixEl = (el) => (el.type === 'text' ? measureText(el) : el);
 
 const RAIL = [
   ['templates', '🧩', 'Templates'],
+  ['ai', '✨', 'AI'],
   ['elements', '🔷', 'Elements'],
   ['text', '🔤', 'Text'],
+  ['photos', '🔍', 'Photos'],
   ['uploads', '☁️', 'Uploads'],
   ['background', '🎨', 'Background'],
   ['layers', '📚', 'Layers'],
@@ -68,13 +90,20 @@ function Range({ label, value, onChange, min = 0, max = 100, step = 1, suffix = 
   );
 }
 
-function ColorRow({ label, value, onChange }) {
+function ColorRow({ label, value, onChange, colors }) {
   const v = /^#[0-9a-f]{6}$/i.test(value || '') ? value : '#000000';
   return (
-    <div className="color-row">
-      <input type="color" value={v} onChange={(e) => onChange(e.target.value)} />
-      <span className="grow">{label}</span>
-      <input className="input" style={{ width: 92, padding: '5px 8px', fontSize: 12 }} value={value || ''} onChange={(e) => onChange(e.target.value)} />
+    <div>
+      <div className="color-row">
+        <input type="color" value={v} onChange={(e) => onChange(e.target.value)} />
+        <span className="grow">{label}</span>
+        <input className="input" style={{ width: 92, padding: '5px 8px', fontSize: 12 }} value={value || ''} onChange={(e) => onChange(e.target.value)} />
+      </div>
+      {colors?.length ? (
+        <div className="mini-swatches">
+          {colors.map((c) => <button key={c} title={c} style={{ background: c }} onClick={() => onChange(c)} />)}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -97,6 +126,11 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
   const [modal, setModal] = useState(null); // 'share' | 'download' | 'resize' | 'present'
   const [guides, setGuides] = useState([]);
   const [busy, setBusy] = useState('');
+  const [ai, setAi] = useState(null); // AI helper mode
+  const [menu, setMenu] = useState(null); // right-click menu { x, y }
+  const [fontMsg, setFontMsg] = useState('');
+  const [gFont, setGFont] = useState('');
+  const fontFileRef = useRef(null);
   const scrollRef = useRef(null);
   const wrapRef = useRef(null);
   const clipRef = useRef(null);
@@ -194,6 +228,118 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
     const p = { left: { x: 0 }, center: { x: (W - sel.w) / 2 }, right: { x: W - sel.w }, top: { y: 0 }, middle: { y: (H - sel.h) / 2 }, bottom: { y: H - sel.h } }[how];
     updateSel(p);
   };
+  const colors = useMemo(() => designColors(design), [design]);
+  const fontList = useMemo(
+    () => [...new Set([...(design.fonts || []).map((f) => f.family), ...(design.googleFonts || []), ...FONTS])],
+    [design.fonts, design.googleFonts]
+  );
+
+  // Make an image element the page background (keeps its filters).
+  const toBackground = (el) => {
+    if (!el || el.type !== 'image') return;
+    commit((d) => mapPage(d, (p) => ({
+      ...p,
+      background: { type: 'image', src: el.src, color: '#ffffff', filters: el.filters, opacity: el.opacity ?? 1 },
+      elements: p.elements.filter((e) => e.id !== el.id),
+    })));
+    setSelId(null);
+  };
+  const bgToImage = () => {
+    const bg = page.background;
+    if (bg?.type !== 'image') return;
+    const e = imageEl({ src: bg.src, x: 0, y: 0, w: W, h: H, filters: bg.filters || {}, opacity: bg.opacity ?? 1 });
+    commit((d) => mapPage(d, (p) => ({ ...p, background: { type: 'color', color: '#ffffff' }, elements: [e, ...p.elements] })));
+    setSelId(e.id);
+  };
+
+  // ---------- custom fonts ----------
+  async function addFontFile(file) {
+    setFontMsg('');
+    try {
+      const src = await fontFileToDataUrl(file);
+      const family = file.name.replace(/\.(ttf|otf|woff2?)$/i, '').replace(/[^\w \-]/g, ' ').trim().slice(0, 50) || 'Custom font';
+      if (!(await loadFontFile(family, src))) throw new Error("That file doesn't look like a font.");
+      commit((d) => ({ ...d, fonts: [...(d.fonts || []).filter((f) => f.family !== family), { family, src }] }));
+      setFontMsg(`Added “${family}”. Pick it from the font list.`);
+      if (sel?.type === 'text') updateSel({ fontFamily: family });
+    } catch (e) {
+      setFontMsg(e.message);
+    }
+  }
+  async function addGoogleFont(name) {
+    const family = name.trim().replace(/\s+/g, ' ');
+    if (!family) return;
+    setFontMsg(`Loading ${family}…`);
+    if (!(await loadGoogleFont(family))) { setFontMsg(`Couldn't find “${family}” on Google Fonts. Check the spelling (e.g. “Roboto Condensed”).`); return; }
+    commit((d) => ({ ...d, googleFonts: [...new Set([...(d.googleFonts || []), family])] }));
+    setFontMsg(`Added “${family}”.`);
+    setGFont('');
+    if (sel?.type === 'text') { updateSel({ fontFamily: family }); loadFont({ ...sel, fontFamily: family }); }
+  }
+
+  // ---------- photo search ----------
+  async function pickPhoto(r, asBackground) {
+    setBusy('Adding photo…');
+    try {
+      const blob = await (await fetch(`/api/images/${r.id}`)).blob();
+      if (!blob.type.startsWith('image/')) throw new Error('That image is not available.');
+      const a = { id: uid(), ...(await fileToDataUrl(blob, 1800)), credit: `${r.title || 'Photo'}${r.creator ? ` by ${r.creator}` : ''} (${r.license})`, source: r.source };
+      commit((d) => ({ ...d, assets: [a, ...(d.assets || [])] }));
+      if (asBackground) setBg({ type: 'image', src: a.src, color: '#ffffff' });
+      else insertAsset(a);
+    } catch (e) {
+      alert(e.message || 'Could not add that photo.');
+    } finally {
+      setBusy('');
+    }
+  }
+
+  // ---------- AI ----------
+  async function applyAi(reply, _idea, progress) {
+    if (ai === 'text') {
+      const text = stripFences(reply);
+      if (!text) throw new Error('The reply was empty.');
+      updateSel({ text });
+      return;
+    }
+    if (ai === 'palette') {
+      const list = aiToPalette(extractJson(reply));
+      // Recolor the page: map its colors (most used first) onto the new palette.
+      const used = designColors({ pages: [page] });
+      const map = new Map(used.map((c, i) => [c, list[i % list.length]]));
+      const sw = (c) => (typeof c === 'string' && map.has(c.toLowerCase()) ? map.get(c.toLowerCase()) : c);
+      commit((d) => mapPage(d, (p) => ({
+        ...p,
+        background: { ...p.background, color: sw(p.background?.color), from: sw(p.background?.from), to: sw(p.background?.to) },
+        elements: p.elements.map((e) => ({ ...e, color: sw(e.color), fill: sw(e.fill), gradient: sw(e.gradient), stroke: sw(e.stroke), bgColor: sw(e.bgColor) })),
+      })));
+      return;
+    }
+    let pages = aiToPages(extractJson(reply), W, H);
+    pages = await fillAiImages(pages, progress);
+    pages = pages.map((p) => ({ ...p, elements: p.elements.map(fixEl) }));
+    if (ai === 'page') {
+      commit((d) => ({ ...d, pages: d.pages.map((p, i) => (i === pi ? { ...pages[0], id: p.id, notes: p.notes } : p)) }));
+    } else {
+      commit((d) => { const all = [...d.pages]; all.splice(pi + 1, 0, ...pages); return { ...d, pages: all }; });
+      setPageIdx(pi + 1);
+    }
+    setSelId(null);
+    pages.forEach((p) => p.elements.forEach((e) => e.type === 'text' && loadFont(e)));
+  }
+
+  // ---------- resized copy ----------
+  async function resizedCopy(nw, nh) {
+    const d = designRef.current;
+    nw = Math.round(Math.min(8000, Math.max(16, nw)));
+    nh = Math.round(Math.min(8000, Math.max(16, nh)));
+    const copy = { ...d, width: nw, height: nh, pages: d.pages.map((p) => { const sp = scalePage(p, d.width, d.height, nw, nh); return { ...sp, elements: sp.elements.map(fixEl) }; }) };
+    const r = await fetch('/api/designs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: `${title} (${nw}×${nh})`, design: copy }) });
+    if (!r.ok) { alert('Could not make the copy.'); return; }
+    const { id: nid } = await r.json();
+    setModal(null);
+    window.open(`/design/${nid}`, '_blank');
+  }
 
   // ---------- fonts ----------
   const loadFont = useCallback((el) => {
@@ -207,7 +353,11 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
   }, []);
 
   useEffect(() => {
-    ensureFonts(designRef.current).then(() => {
+    if (new URLSearchParams(location.search).get('share') === '1') setModal('share');
+  }, []);
+
+  useEffect(() => {
+    registerFonts(designRef.current).then(() => ensureFonts(designRef.current)).then(() => {
       const d = designRef.current;
       const next = { ...d, pages: d.pages.map((p) => ({ ...p, elements: p.elements.map(fixEl) })) };
       designRef.current = next;
@@ -583,10 +733,38 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
             </div>
           ) : null}
         </div>
+        {role === 'owner' ? <button className="btn btn-sm" onClick={() => setModal('template')} title="Save as a template you or others can reuse">📌 Template</button> : null}
         <button className="btn btn-sm btn-white" onClick={() => setModal('share')}>🔗 Share</button>
       </div>
 
-      {modal === 'resize' ? <ResizeMenu W={W} H={H} onApply={resizeDesign} onClose={() => setModal(null)} /> : null}
+      {modal === 'resize' ? <ResizeMenu W={W} H={H} onApply={resizeDesign} onCopy={resizedCopy} onClose={() => setModal(null)} /> : null}
+      {modal === 'template' ? <SaveTemplate id={id} title={title} beforeSave={saveNow} onClose={() => setModal(null)} /> : null}
+      {ai ? (
+        <AiHelper
+          mode={ai}
+          context={{ width: W, height: H, title, pages: 1, text: sel?.type === 'text' ? sel.text : '', design: page }}
+          onApply={applyAi}
+          onClose={() => setAi(null)}
+        />
+      ) : null}
+      {menu ? (
+        <ContextMenu
+          x={menu.x} y={menu.y} el={sel} page={page} colors={colors} hasClip={!!clipRef.current}
+          onClose={() => setMenu(null)}
+          act={{
+            update: (patch, opts) => updateSel(patch, opts),
+            setBg, toBackground, bgToImage, deleteSel, duplicateSel, reorder, alignSel,
+            copy: () => { if (sel) clipRef.current = sel; },
+            paste: () => { if (clipRef.current) { const c = { ...clipRef.current, id: uid(), x: clipRef.current.x + 24 * k, y: clipRef.current.y + 24 * k }; clipRef.current = c; addEl(c, { center: false }); } },
+            editText: () => { if (sel?.type === 'text') { snapshot(); setEditingId(sel.id); } },
+            replace: () => replaceRef.current?.click(),
+            upload: () => { setPanel('uploads'); setTimeout(() => uploadRef.current?.click(), 50); },
+            ai: (mode) => setAi(mode),
+            addPage: () => addPage(), dupPage, delPage,
+            canDeletePage: design.pages.length > 1,
+          }}
+        />
+      ) : null}
 
       <div className={`ed-main ${panel ? '' : 'no-panel'}`}>
         {/* ---------- left rail ---------- */}
@@ -607,8 +785,24 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
               <div className="tile-grid cols-2">
                 {TEMPLATES.map((t) => <TemplateTile key={t.id} t={t} onClick={() => applyTemplate(t)} />)}
               </div>
+              <UserTemplates onPick={(td) => applyTemplate({ make: () => td.pages, width: td.width, height: td.height })} />
             </>
           ) : null}
+
+          {panel === 'ai' ? (
+            <>
+              <h4>AI tools</h4>
+              <p className="small muted" style={{ marginTop: 0 }}>Works with any AI (ChatGPT, Claude, Gemini…). We write the prompt, you paste the answer back.</p>
+              <div className="stack" style={{ gap: 8 }}>
+                <button className="text-preset" onClick={() => setAi('pages')}><b>✨ Add pages with AI</b><div className="small muted">Describe new slides or pages</div></button>
+                <button className="text-preset" onClick={() => setAi('page')}><b>🪄 Redesign this page</b><div className="small muted">Make page {pi + 1} look better</div></button>
+                <button className="text-preset" disabled={sel?.type !== 'text'} onClick={() => setAi('text')}><b>✍️ Rewrite selected text</b><div className="small muted">{sel?.type === 'text' ? `“${sel.text.slice(0, 40)}”` : 'Select some text first'}</div></button>
+                <button className="text-preset" onClick={() => setAi('palette')}><b>🎨 New color palette</b><div className="small muted">Recolors this page</div></button>
+              </div>
+            </>
+          ) : null}
+
+          {panel === 'photos' ? <ImageSearch onPick={pickPhoto} /> : null}
 
           {panel === 'elements' ? (
             <>
@@ -657,6 +851,21 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
                   <div style={{ fontFamily: b, fontSize: 12 }}>{tb}</div>
                 </button>
               ))}
+              <h4>Your fonts</h4>
+              <button className="btn btn-sm" style={{ width: '100%' }} onClick={() => fontFileRef.current?.click()}>⬆️ Upload a font (.ttf .otf .woff .woff2)</button>
+              <input ref={fontFileRef} type="file" accept=".ttf,.otf,.woff,.woff2,font/*" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) addFontFile(f); }} />
+              <form className="row" style={{ marginTop: 8, gap: 6 }} onSubmit={(e) => { e.preventDefault(); addGoogleFont(gFont); }}>
+                <input className="input" placeholder="Any Google Font, e.g. Roboto Slab" value={gFont} onChange={(e) => setGFont(e.target.value)} style={{ fontSize: 13 }} />
+                <button className="btn btn-sm" disabled={!gFont.trim()}>Add</button>
+              </form>
+              {fontMsg ? <p className="small muted">{fontMsg}</p> : null}
+              {[...(design.fonts || []).map((f) => ({ family: f.family, kind: 'file' })), ...(design.googleFonts || []).map((g) => ({ family: g, kind: 'google' }))].map((f) => (
+                <div key={f.family} className="layer" onClick={() => sel?.type === 'text' ? updateSel({ fontFamily: f.family }) : addEl(textEl({ text: f.family, fontFamily: f.family, fontSize: 64 * k, w: 700 * k }))}>
+                  <span className="name" style={{ fontFamily: `"${f.family}"`, fontSize: 16 }}>{f.family}</span>
+                  <span className="small muted">{f.kind === 'file' ? 'uploaded' : 'Google'}</span>
+                  <button title="Remove" onClick={(ev) => { ev.stopPropagation(); commit((d) => ({ ...d, fonts: (d.fonts || []).filter((x) => x.family !== f.family), googleFonts: (d.googleFonts || []).filter((x) => x !== f.family) })); }}>✕</button>
+                </div>
+              ))}
             </>
           ) : null}
 
@@ -670,7 +879,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
                 <div className="tile-grid cols-2">
                   {design.assets.map((a) => (
                     <div key={a.id} style={{ position: 'relative' }}>
-                      <button className="tile" style={{ padding: 0, width: '100%' }} onClick={() => insertAsset(a)} title="Add to page">
+                      <button className="tile" style={{ padding: 0, width: '100%' }} onClick={() => insertAsset(a)} title={a.credit ? `Add to page · ${a.credit}` : 'Add to page'}>
                         <img src={a.src} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                       </button>
                       <div className="row" style={{ position: 'absolute', bottom: 4, right: 4, gap: 4 }}>
@@ -690,7 +899,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
               <div className="tile-grid cols-6">
                 {SWATCHES.map((c) => <button key={c} className="swatch" style={{ background: c }} onClick={() => setBg({ type: 'color', color: c })} title={c} />)}
               </div>
-              <ColorRow label="Custom color" value={page.background?.type === 'color' ? page.background.color : '#ffffff'} onChange={(c) => setBg({ type: 'color', color: c })} />
+              <ColorRow label="Custom color" value={page.background?.type === 'color' ? page.background.color : '#ffffff'} onChange={(c) => setBg({ type: 'color', color: c })} colors={colors} />
               <h4>Gradients</h4>
               <div className="tile-grid cols-6">
                 {GRADIENTS.map(([a, b]) => <button key={a + b} className="swatch" style={{ background: `linear-gradient(135deg, ${a}, ${b})` }} onClick={() => setBg({ type: 'gradient', from: a, to: b, angle: 135 })} />)}
@@ -707,7 +916,12 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
                 <>
                   <Range label="Brightness" min={0} max={200} value={page.background.filters?.brightness ?? 100} onChange={(v) => setBg({ ...page.background, filters: { ...page.background.filters, brightness: v } })} suffix="%" />
                   <Range label="Blur" min={0} max={30} value={page.background.filters?.blur ?? 0} onChange={(v) => setBg({ ...page.background, filters: { ...page.background.filters, blur: v } })} suffix="px" />
-                  <button className="btn btn-sm" onClick={() => setBg({ type: 'color', color: '#ffffff' })}>Remove photo</button>
+                  <Range label="Transparency" min={0} max={100} value={Math.round((1 - (page.background.opacity ?? 1)) * 100)} onChange={(v) => setBg({ ...page.background, opacity: 1 - v / 100 })} suffix="%" />
+                  <ColorRow label="Behind photo" value={page.background.color || '#ffffff'} onChange={(c) => setBg({ ...page.background, color: c })} colors={colors} />
+                  <div className="row wrap" style={{ gap: 6 }}>
+                    <button className="btn btn-sm" onClick={bgToImage}>Make it a movable photo</button>
+                    <button className="btn btn-sm" onClick={() => setBg({ type: 'color', color: '#ffffff' })}>Remove photo</button>
+                  </div>
                 </>
               ) : <p className="small muted">Upload an image, then press 🖼 on it in Uploads — or select a photo on the page and choose “Set as background”.</p>}
               <h4>Transparent</h4>
@@ -742,7 +956,14 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
             onWheel={(e) => { if (e.ctrlKey || e.metaKey) { e.preventDefault(); setAutoFit(false); setZoom((z) => Math.max(0.05, Math.min(4, z * (e.deltaY > 0 ? 0.9 : 1.1)))); } }}
           >
             <div className="ed-canvas-wrap" ref={wrapRef} style={{ width: W * zoom, height: H * zoom, background: page.background?.type === 'none' ? 'repeating-conic-gradient(#ddd 0 25%, #fff 0 50%) 0 0 / 20px 20px' : undefined }}
-              onPointerDown={onCanvasDown} onDoubleClick={onCanvasDouble}>
+              onPointerDown={onCanvasDown} onDoubleClick={onCanvasDouble}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                const t = e.target.closest?.('[data-id]');
+                setSelId(t ? t.getAttribute('data-id') : null);
+                setEditingId(null);
+                setMenu({ x: e.clientX, y: e.clientY });
+              }}>
               <DesignPage id="export-svg" design={design} page={renderPage} width={W * zoom} height={H * zoom} uidPrefix="ed-" style={{ cursor: 'default' }} />
               {guides.map((g, i) => (
                 <div key={i} className="guide" style={g.v ? { left: g.at * zoom, top: 0, width: 1, height: H * zoom } : { top: g.at * zoom, left: 0, height: 1, width: W * zoom }} />
@@ -785,7 +1006,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
           <div className="ed-pages">
             {design.pages.map((p, i) => (
               <div key={p.id} className={`ed-page-thumb ${i === pi ? 'active' : ''}`} onClick={() => { setPageIdx(i); setSelId(null); setEditingId(null); }}>
-                <DesignPage design={design} page={p} width={undefined} height="100%" uidPrefix={`pg${i}-`} />
+                <DesignPage design={design} page={p} width={Math.round((72 * design.width) / design.height)} height={72} uidPrefix={`pg${i}-`} />
                 <span className="n">{i + 1}</span>
               </div>
             ))}
@@ -801,9 +1022,9 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
         <div className="ed-side">
           {sel ? (
             <Props
-              el={sel} update={updateSel} k={k}
+              el={sel} update={updateSel} k={k} fonts={fontList} colors={colors}
               onFont={(e) => loadFont(e)}
-              actions={{ deleteSel, duplicateSel, reorder, alignSel, replace: () => replaceRef.current?.click(), setBg: () => { setBg({ type: 'image', src: sel.src, color: '#ffffff', filters: sel.filters }); deleteSel(); } }}
+              actions={{ deleteSel, duplicateSel, reorder, alignSel, replace: () => replaceRef.current?.click(), setBg: () => toBackground(sel), aiText: () => setAi('text') }}
             />
           ) : (
             <>
@@ -862,20 +1083,66 @@ function TemplateTile({ t, onClick }) {
   );
 }
 
-function ResizeMenu({ W, H, onApply, onClose }) {
+function UserTemplates({ onPick }) {
+  const [scope, setScope] = useState('mine');
+  const [list, setList] = useState(null);
+  useEffect(() => {
+    setList(null);
+    fetch(`/api/templates?scope=${scope}`).then((r) => r.json()).then((d) => setList((d.templates || []).filter((t) => t.data?.kind !== 'doc'))).catch(() => setList([]));
+  }, [scope]);
+  return (
+    <>
+      <div className="row" style={{ marginTop: 18 }}>
+        <h4 className="grow" style={{ margin: 0 }}>{scope === 'mine' ? 'Your templates' : 'Community templates'}</h4>
+        <button className="btn btn-sm" onClick={() => setScope(scope === 'mine' ? 'community' : 'mine')}>{scope === 'mine' ? 'Community →' : '← Yours'}</button>
+      </div>
+      {!list ? <p className="small muted">Loading…</p> : !list.length ? (
+        <p className="small muted">{scope === 'mine' ? 'None yet. Press 📌 Template at the top to save this design as one.' : 'No community templates yet.'}</p>
+      ) : (
+        <div className="tile-grid cols-2" style={{ marginTop: 8 }}>
+          {list.map((t) => (
+            <button key={t.id} className="tpl" onClick={() => onPick(t.data)} title={`${t.title}${scope === 'community' ? ` by @${t.username}` : ''}`}>
+              <DesignPage design={t.data} page={t.data.pages[0]} width="100%" uidPrefix={`ut-${t.id}-`} />
+              <span>{t.title}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+const UNITS = { px: 1, in: 96, cm: 37.7953, mm: 3.77953 };
+
+function ResizeMenu({ W, H, onApply, onCopy, onClose }) {
   const [w, setW] = useState(W);
   const [h, setH] = useState(H);
+  const [unit, setUnit] = useState('px');
+  const [lock, setLock] = useState(false);
   const [scale, setScale] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const u = UNITS[unit];
+  const show = (v) => Math.round((v / u) * 100) / 100;
+  const setWidth = (v) => { const px = v * u; if (lock && w) setH(Math.round((h * px) / w)); setW(Math.round(px)); };
+  const setHeight = (v) => { const px = v * u; if (lock && h) setW(Math.round((w * px) / h)); setH(Math.round(px)); };
+  const ok = w >= 16 && h >= 16 && w <= 8000 && h <= 8000;
   return (
     <div className="modal-back" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal">
         <div className="modal-head"><h3>Resize design</h3><button className="btn btn-ghost btn-sm" onClick={onClose}>✕</button></div>
         <div className="modal-body">
-          <div className="row">
-            <label className="field grow">Width (px)<input className="input" type="number" value={w} onChange={(e) => setW(Number(e.target.value))} /></label>
-            <button className="btn btn-sm" style={{ marginTop: 20 }} title="Swap" onClick={() => { setW(h); setH(w); }}>⇄</button>
-            <label className="field grow">Height (px)<input className="input" type="number" value={h} onChange={(e) => setH(Number(e.target.value))} /></label>
+          <div className="row" style={{ alignItems: 'flex-end' }}>
+            <label className="field grow">Width<input className="input" type="number" step="any" value={show(w)} onChange={(e) => setWidth(Number(e.target.value))} /></label>
+            <button className={`btn btn-sm ${lock ? 'active' : ''}`} title="Keep proportions" onClick={() => setLock(!lock)}>{lock ? '🔗' : '⛓️‍💥'}</button>
+            <label className="field grow">Height<input className="input" type="number" step="any" value={show(h)} onChange={(e) => setHeight(Number(e.target.value))} /></label>
+            <label className="field">Units
+              <select className="input" value={unit} onChange={(e) => setUnit(e.target.value)} style={{ width: 80 }}>
+                {Object.keys(UNITS).map((x) => <option key={x}>{x}</option>)}
+              </select>
+            </label>
+            <button className="btn btn-sm" title="Swap width and height" onClick={() => { setW(h); setH(w); }}>⇄</button>
           </div>
+          <div className="small muted">{w} × {h} px{!ok ? ' · must be between 16 and 8000 px' : ''}</div>
           <label className="row small"><input type="checkbox" checked={scale} onChange={(e) => setScale(e.target.checked)} /> Scale everything to fit the new size</label>
           <div style={{ maxHeight: 280, overflow: 'auto' }}>
             {PRESET_GROUPS.map((g) => (
@@ -887,33 +1154,43 @@ function ResizeMenu({ W, H, onApply, onClose }) {
               </div>
             ))}
           </div>
-          <div className="row"><div className="grow" /><button className="btn" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={() => onApply(w, h, scale)}>Resize</button></div>
+          <div className="row wrap">
+            <div className="grow" />
+            <button className="btn" onClick={onClose}>Cancel</button>
+            <button className="btn" disabled={!ok || busy} title="Keeps this design as it is and opens a resized copy in a new tab" onClick={async () => { setBusy(true); await onCopy(w, h); setBusy(false); }}>{busy ? 'Copying…' : '⧉ Resize a copy'}</button>
+            <button className="btn btn-primary" disabled={!ok} onClick={() => onApply(w, h, scale)}>Resize</button>
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-function Props({ el, update, actions, onFont, k }) {
+function Props({ el, update, actions, onFont, k, fonts = FONTS, colors = [] }) {
   const f = el.filters || {};
   const sh = el.shadow || {};
   return (
     <>
       {el.type === 'text' ? (
         <>
-          <h4>Text</h4>
-          <textarea className="input" rows={3} value={el.text} onChange={(e) => update({ text: e.target.value })} />
+          <div className="row"><h4 className="grow" style={{ margin: 0 }}>Text</h4><button className="btn btn-sm" onClick={actions.aiText}>✨ Rewrite with AI</button></div>
+          <textarea className="input" rows={3} value={el.text} onChange={(e) => update({ text: e.target.value })} style={{ marginTop: 8 }} />
           <div className="prop" style={{ marginTop: 8 }}>
             <label style={{ gridColumn: 'span 2' }}>Font
               <select value={el.fontFamily} onChange={(e) => { update({ fontFamily: e.target.value }); onFont({ ...el, fontFamily: e.target.value }); }} style={{ fontFamily: el.fontFamily }}>
-                {[...new Set([...FONTS, el.fontFamily])].map((fnt) => <option key={fnt} value={fnt} style={{ fontFamily: fnt }}>{fnt}</option>)}
+                {[...new Set([...fonts, el.fontFamily])].map((fnt) => <option key={fnt} value={fnt} style={{ fontFamily: fnt }}>{fnt}</option>)}
               </select>
             </label>
             <Num label="Size" value={el.fontSize} min={1} onChange={(v) => update({ fontSize: Math.max(1, v) })} />
+            <label>Weight
+              <select value={el.fontWeight || 400} onChange={(e) => { const fw = Number(e.target.value); update({ fontWeight: fw }); onFont({ ...el, fontWeight: fw }); }}>
+                {[100, 200, 300, 400, 500, 600, 700, 800, 900].map((w) => <option key={w} value={w}>{w}{w === 400 ? ' (normal)' : w === 700 ? ' (bold)' : ''}</option>)}
+              </select>
+            </label>
             <Num label="Line height" value={el.lineHeight} step={0.05} onChange={(v) => update({ lineHeight: Math.max(0.5, v) })} />
             <Num label="Letter spacing" value={el.letterSpacing || 0} onChange={(v) => update({ letterSpacing: v })} />
-            <label>Color<input type="color" value={/^#[0-9a-f]{6}$/i.test(el.color) ? el.color : '#000000'} onChange={(e) => update({ color: e.target.value })} style={{ height: 31, padding: 2 }} /></label>
           </div>
+          <ColorRow label="Text color" value={el.color} onChange={(c) => update({ color: c })} colors={colors} />
           <div className="toggle-row">
             <button className={`btn ${el.fontWeight >= 700 ? 'active' : ''}`} onClick={() => { const fw = el.fontWeight >= 700 ? 400 : 700; update({ fontWeight: fw }); onFont({ ...el, fontWeight: fw }); }}><b>B</b></button>
             <button className={`btn ${el.italic ? 'active' : ''}`} onClick={() => update({ italic: !el.italic })}><i>I</i></button>
@@ -928,22 +1205,34 @@ function Props({ el, update, actions, onFont, k }) {
             <button className={`btn ${el.strokeWidth ? 'active' : ''}`} onClick={() => update({ strokeWidth: el.strokeWidth ? 0 : Math.max(1, el.fontSize / 20), stroke: el.stroke || '#000000' })}>Outline</button>
             <button className={`btn ${el.bgColor ? 'active' : ''}`} onClick={() => update({ bgColor: el.bgColor ? '' : '#fde047' })}>Highlight</button>
           </div>
-          {el.strokeWidth ? <><ColorRow label="Outline color" value={el.stroke} onChange={(c) => update({ stroke: c })} /><Range label="Outline" min={0.5} max={Math.max(10, el.fontSize / 5)} step={0.5} value={el.strokeWidth} onChange={(v) => update({ strokeWidth: v })} /></> : null}
-          {el.bgColor ? <ColorRow label="Highlight color" value={el.bgColor} onChange={(c) => update({ bgColor: c })} /> : null}
+          {el.strokeWidth ? <><ColorRow label="Outline color" value={el.stroke} onChange={(c) => update({ stroke: c })} colors={colors} /><Range label="Outline" min={0.5} max={Math.max(10, el.fontSize / 5)} step={0.5} value={el.strokeWidth} onChange={(v) => update({ strokeWidth: v })} /></> : null}
+          {el.bgColor ? <ColorRow label="Highlight color" value={el.bgColor} onChange={(c) => update({ bgColor: c })} colors={colors} /> : null}
         </>
       ) : null}
 
       {el.type === 'shape' ? (
         <>
           <h4>Shape</h4>
-          <ColorRow label="Fill" value={el.fill} onChange={(c) => update({ fill: c })} />
+          <ColorRow label="Fill" value={el.fill} onChange={(c) => update({ fill: c })} colors={colors} />
           <div className="toggle-row">
             <button className={`btn ${!el.fill ? 'active' : ''}`} onClick={() => update({ fill: el.fill ? '' : '#1f9d5a' })}>No fill</button>
             <button className={`btn ${el.gradient ? 'active' : ''}`} onClick={() => update({ gradient: el.gradient ? '' : '#3ddc84', fill: el.fill || '#1f9d5a' })}>Gradient</button>
           </div>
-          {el.gradient ? <ColorRow label="Gradient to" value={el.gradient} onChange={(c) => update({ gradient: c })} /> : null}
-          <ColorRow label="Border" value={el.stroke} onChange={(c) => update({ stroke: c })} />
+          {el.gradient ? (
+            <>
+              <ColorRow label="Gradient to" value={el.gradient} onChange={(c) => update({ gradient: c })} colors={colors} />
+              <Range label="Angle" min={0} max={360} value={el.gradientAngle ?? 135} onChange={(v) => update({ gradientAngle: v })} suffix="°" />
+            </>
+          ) : null}
+          <ColorRow label="Border" value={el.stroke} onChange={(c) => update({ stroke: c })} colors={colors} />
           <Range label="Border width" min={0} max={Math.max(40, 60 * k)} value={el.strokeWidth || 0} onChange={(v) => update({ strokeWidth: v })} />
+          {el.strokeWidth ? (
+            <div className="toggle-row">
+              {[['solid', '━ Solid'], ['dashed', '╌ Dashed'], ['dotted', '┈ Dotted']].map(([v, l]) => (
+                <button key={v} className={`btn ${(el.borderStyle || 'solid') === v ? 'active' : ''}`} onClick={() => update({ borderStyle: v })}>{l}</button>
+              ))}
+            </div>
+          ) : null}
           {el.shape === 'rect' ? <Range label="Corners" min={0} max={Math.min(el.w, el.h) / 2} value={el.radius || 0} onChange={(v) => update({ radius: v })} /> : null}
           {el.shape === 'star' ? <Range label="Points" min={3} max={12} value={el.points || 5} onChange={(v) => update({ points: v })} /> : null}
         </>
@@ -952,7 +1241,7 @@ function Props({ el, update, actions, onFont, k }) {
       {el.type === 'line' ? (
         <>
           <h4>Line</h4>
-          <ColorRow label="Color" value={el.stroke} onChange={(c) => update({ stroke: c })} />
+          <ColorRow label="Color" value={el.stroke} onChange={(c) => update({ stroke: c })} colors={colors} />
           <Range label="Thickness" min={1} max={Math.max(40, 60 * k)} value={el.strokeWidth} onChange={(v) => update({ strokeWidth: v, h: Math.max(el.h, v * 2.2) })} />
           <div className="toggle-row">
             <button className={`btn ${el.dash ? 'active' : ''}`} onClick={() => update({ dash: !el.dash })}>Dashed</button>
@@ -971,6 +1260,15 @@ function Props({ el, update, actions, onFont, k }) {
             <button className={`btn ${el.flipY ? 'active' : ''}`} onClick={() => update({ flipY: !el.flipY })}>⇵ Flip</button>
             <button className={`btn ${el.fit === 'contain' ? 'active' : ''}`} onClick={() => update({ fit: el.fit === 'contain' ? 'cover' : 'contain' })}>Fit whole</button>
           </div>
+          {el.fit !== 'contain' ? (
+            <>
+              <div className="small muted" style={{ marginTop: 6 }}>Focus (which part stays in frame)</div>
+              <div className="focus-grid">
+                {FOCUS.map(([v, i]) => <button key={v} className={`btn ${(el.focus || 'xMidYMid') === v ? 'active' : ''}`} onClick={() => update({ focus: v })}>{i}</button>)}
+              </div>
+            </>
+          ) : null}
+          {el.credit ? <div className="small muted" style={{ marginTop: 6 }}>📷 {el.credit}</div> : null}
           <h4>Filters</h4>
           <div className="toggle-row">
             {[['Original', {}], ['B&W', { grayscale: 100 }], ['Vintage', { sepia: 60, contrast: 110 }], ['Vivid', { saturate: 160, contrast: 110 }], ['Cool', { hue: 190, saturate: 80 }], ['Fade', { brightness: 115, contrast: 80, saturate: 70 }]].map(([n, v]) => (
@@ -985,13 +1283,20 @@ function Props({ el, update, actions, onFont, k }) {
           <Range label="Hue" min={0} max={360} value={f.hue ?? 0} onChange={(v) => update({ filters: { ...f, hue: v } })} suffix="°" />
           <Range label="Blur" min={0} max={20} step={0.5} value={f.blur ?? 0} onChange={(v) => update({ filters: { ...f, blur: v } })} suffix="px" />
           <Range label="Corners" min={0} max={Math.min(el.w, el.h) / 2} value={el.radius || 0} onChange={(v) => update({ radius: v })} />
-          <ColorRow label="Border" value={el.stroke || '#000000'} onChange={(c) => update({ stroke: c })} />
+          <ColorRow label="Border" value={el.stroke || '#000000'} onChange={(c) => update({ stroke: c })} colors={colors} />
           <Range label="Border width" min={0} max={40} value={el.strokeWidth || 0} onChange={(v) => update({ strokeWidth: v })} />
         </>
       ) : null}
 
       <h4>Look</h4>
-      <Range label="Opacity" min={0} max={100} value={Math.round((el.opacity ?? 1) * 100)} onChange={(v) => update({ opacity: v / 100 })} suffix="%" />
+      <Range label="Transparency" min={0} max={100} value={Math.round((1 - (el.opacity ?? 1)) * 100)} onChange={(v) => update({ opacity: 1 - v / 100 })} suffix="%" />
+      <div className="prop">
+        <label style={{ gridColumn: 'span 2' }}>Blend mode
+          <select value={el.blend || 'normal'} onChange={(e) => update({ blend: e.target.value })}>
+            {BLENDS.map((b) => <option key={b} value={b}>{b}</option>)}
+          </select>
+        </label>
+      </div>
       <div className="toggle-row">
         <button className={`btn ${sh.on ? 'active' : ''}`} onClick={() => update({ shadow: { x: 6 * k, y: 10 * k, blur: 20 * k, color: 'rgba(0,0,0,0.35)', ...sh, on: !sh.on } })}>Shadow</button>
       </div>

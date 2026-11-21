@@ -6,11 +6,24 @@ import DesignPage from './DesignPage';
 import Avatar from './Avatar';
 
 export function Thumb({ data, uid }) {
+  if (typeof data === 'string') { try { data = JSON.parse(data); } catch { data = null; } }
+  if (data?.kind === 'doc') {
+    const s = 190 / (data.width || 816);
+    return (
+      <div className="thumb">
+        <div className="doc-thumb">
+          <div className="doc-thumb-inner" style={{ transform: `scale(${s})` }}>
+            <div className="doc-paper doc-content" style={{ width: data.width, height: data.height, padding: (data.page?.margin ?? 1) * 96, overflow: 'hidden' }} dangerouslySetInnerHTML={{ __html: data.html || '' }} />
+          </div>
+        </div>
+      </div>
+    );
+  }
   const page = data?.pages?.[0];
   if (!page) return <div className="thumb" />;
   return (
     <div className="thumb">
-      <DesignPage design={data} page={page} width={undefined} height="100%" uidPrefix={`t${uid}-`} />
+      <DesignPage design={data} page={page} width="100%" height="100%" uidPrefix={`t${uid}-`} />
     </div>
   );
 }

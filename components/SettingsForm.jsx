@@ -33,7 +33,7 @@ export default function SettingsForm({ user, configured }) {
     try {
       const r = await fetch('/api/settings/test-email', { method: 'POST' });
       const d = await r.json();
-      if (d.sent) setTest({ ok: true, text: 'Test email sent! It can take about 2 minutes to arrive — check your inbox (and spam).' });
+      if (d.sent) setTest({ ok: true, text: 'Test email sent! Check your inbox.' });
       else setTest({ err: true, text: REASONS[d.reason] || `Not sent: ${d.detail || d.reason || 'unknown error'}` });
     } catch {
       setTest({ err: true, text: 'Could not reach the server.' });

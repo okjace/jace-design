@@ -11,12 +11,12 @@ export const POST = handler(async (_req, { params }) => {
   if (!design || !role) return json({ error: 'Not found' }, 404);
   const nid = newId();
   const mine = design.owner_id === user.id;
-  const title = mine ? `${design.title} (copy)` : `Remix of ${design.title}`;
+  const title = design.is_template ? design.title : mine ? `${design.title} (copy)` : `Remix of ${design.title}`;
   await q(
-    'INSERT INTO designs (id, owner_id, title, width, height, data, remix_of) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)',
+    'INSERT INTO designs (id, owner_id, title, width, height, data, remix_of) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7)',
     [nid, user.id, title.slice(0, 120), design.width, design.height, JSON.stringify(design.data), mine ? null : id]
   );
-  if (!mine) {
+  if (!mine && !design.is_template) {
     const base = await siteUrl();
     after(() => emailUser(design.owner_id, {
       subject: `${user.name || user.username} remixed "${design.title}"`,

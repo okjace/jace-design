@@ -25,16 +25,31 @@ export function Background({ bg, w, h, pid }) {
     return (
       <>
         <rect width={w} height={h} fill={bg.color || '#ffffff'} />
-        <image href={bg.src} width={w} height={h} preserveAspectRatio="xMidYMid slice" style={{ filter: filterCss(bg.filters) }} />
+        <image href={bg.src} width={w} height={h} preserveAspectRatio="xMidYMid slice" opacity={bg.opacity ?? 1} style={{ filter: filterCss(bg.filters) }} />
       </>
     );
   }
   return <rect width={w} height={h} fill="#ffffff" />;
 }
 
-function shadowStyle(s) {
-  if (!s || !s.on) return undefined;
-  return { filter: `drop-shadow(${s.x ?? 4}px ${s.y ?? 6}px ${s.blur ?? 12}px ${s.color || 'rgba(0,0,0,0.35)'})` };
+function elStyle(el) {
+  const s = el.shadow;
+  const style = {};
+  if (s && s.on) style.filter = `drop-shadow(${s.x ?? 4}px ${s.y ?? 6}px ${s.blur ?? 12}px ${s.color || 'rgba(0,0,0,0.35)'})`;
+  if (el.blend && el.blend !== 'normal') style.mixBlendMode = el.blend;
+  return Object.keys(style).length ? style : undefined;
+}
+
+export function dashArray(el) {
+  const sw = el.strokeWidth || 1;
+  if (el.borderStyle === 'dashed') return `${sw * 3} ${sw * 2}`;
+  if (el.borderStyle === 'dotted') return `0 ${sw * 2}`;
+  return undefined;
+}
+
+export function gradientVector(angle = 135) {
+  const a = (angle - 90) * (Math.PI / 180);
+  return { x1: 0.5 - Math.cos(a) / 2, y1: 0.5 - Math.sin(a) / 2, x2: 0.5 + Math.cos(a) / 2, y2: 0.5 + Math.sin(a) / 2 };
 }
 
 export function Element({ el, pid }) {
@@ -42,7 +57,7 @@ export function Element({ el, pid }) {
   const cx = el.x + el.w / 2;
   const cy = el.y + el.h / 2;
   const transform = el.rotation ? `rotate(${el.rotation} ${cx} ${cy})` : undefined;
-  const common = { transform, opacity: el.opacity ?? 1, style: shadowStyle(el.shadow), 'data-id': el.id };
+  const common = { transform, opacity: el.opacity ?? 1, style: elStyle(el), 'data-id': el.id };
   const key = `${pid}-${el.id}`;
 
   if (el.type === 'text') {
@@ -89,7 +104,7 @@ export function Element({ el, pid }) {
           <image
             href={el.src}
             x={el.x} y={el.y} width={el.w} height={el.h}
-            preserveAspectRatio={el.fit === 'contain' ? 'xMidYMid meet' : 'xMidYMid slice'}
+            preserveAspectRatio={el.fit === 'contain' ? 'xMidYMid meet' : `${/^x(Min|Mid|Max)Y(Min|Mid|Max)$/.test(el.focus || '') ? el.focus : 'xMidYMid'} slice`}
             transform={flip}
             style={{ filter: filterCss(el.filters) }}
           />
@@ -113,13 +128,17 @@ export function Element({ el, pid }) {
   }
 
   if (el.type === 'shape') {
-    const paint = { fill: el.fill || 'none', stroke: el.strokeWidth ? el.stroke : 'none', strokeWidth: el.strokeWidth || 0 };
+    const paint = {
+      fill: el.fill || 'none', stroke: el.strokeWidth ? el.stroke : 'none', strokeWidth: el.strokeWidth || 0,
+      strokeDasharray: el.strokeWidth ? dashArray(el) : undefined, strokeLinecap: el.borderStyle === 'dotted' ? 'round' : undefined,
+    };
     let fillDef = null;
     if (el.gradient) {
       paint.fill = `url(#g-${key})`;
+      const v = gradientVector(el.gradientAngle ?? 135);
       fillDef = (
         <defs>
-          <linearGradient id={`g-${key}`} x1="0" y1="0" x2="1" y2="1">
+          <linearGradient id={`g-${key}`} x1={v.x1} y1={v.y1} x2={v.x2} y2={v.y2}>
             <stop offset="0" stopColor={el.fill} />
             <stop offset="1" stopColor={el.gradient} />
           </linearGradient>

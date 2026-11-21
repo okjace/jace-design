@@ -1,20 +1,29 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import DesignPage from './DesignPage';
 import Presenter from './Presenter';
 import ShareModal from './ShareModal';
+import DocPaper from './DocPaper';
 import { exportImage, exportPdf } from '@/lib/export';
+import { exportDocWord, exportDocHtml, exportDocText } from '@/lib/docExport';
+import { registerFonts } from '@/lib/fonts';
 
-export default function DesignViewer({ id, title, design, role, signedIn, likes: initialLikes, liked: initialLiked, visibility }) {
+const ALL = { view: true, comment: true, download: true, print: true, remix: true, edit: true };
+
+export default function DesignViewer({ id, title, design, role, perms = ALL, signedIn, likes: initialLikes, liked: initialLiked, visibility }) {
   const router = useRouter();
   const [i, setI] = useState(0);
   const [likes, setLikes] = useState(initialLikes);
   const [liked, setLiked] = useState(initialLiked);
   const [modal, setModal] = useState(null);
   const [busy, setBusy] = useState('');
-  const n = design.pages.length;
+  const [, setFontsReady] = useState(0);
+  const isDoc = design.kind === 'doc';
+  const n = isDoc ? 1 : design.pages.length;
   const login = () => { location.href = `/api/auth/login?next=/d/${id}`; };
+
+  useEffect(() => { registerFonts(design).then(() => setFontsReady((x) => x + 1)); }, [design]);
 
   async function like() {
     if (!signedIn) return login();
@@ -31,17 +40,26 @@ export default function DesignViewer({ id, title, design, role, signedIn, likes:
     setModal(null);
     setBusy('Preparing…');
     try {
-      if (kind === 'pdf') await exportPdf(design, title);
-      else await exportImage(design, title, { format: kind, pageIndex: kind === 'png-all' ? null : i });
+      if (kind === 'doc') exportDocWord(design, title);
+      else if (kind === 'html') exportDocHtml(design, title);
+      else if (kind === 'txt') exportDocText(design, title);
+      else if (kind === 'pdf') await exportPdf(design, title);
+      else await exportImage(design, title, { format: kind === 'png-all' ? 'png' : kind, pageIndex: kind === 'png-all' ? null : i });
     } finally { setBusy(''); }
   }
 
   return (
     <div className="stack" style={{ gap: 14, minWidth: 0 }}>
       <div className="viewer-stage">
-        <div style={{ width: '100%', maxWidth: `calc(70vh * ${design.width / design.height})`, aspectRatio: `${design.width} / ${design.height}`, boxShadow: '0 8px 30px rgba(0,0,0,.18)' }}>
-          <DesignPage design={design} page={design.pages[i]} width="100%" height="100%" uidPrefix="v-" style={{ display: 'block' }} />
-        </div>
+        {isDoc ? (
+          <div style={{ width: '100%', overflow: 'auto', maxHeight: '75vh', display: 'flex', justifyContent: 'center' }}>
+            <DocPaper design={design} />
+          </div>
+        ) : (
+          <div style={{ width: '100%', maxWidth: `calc(70vh * ${design.width / design.height})`, aspectRatio: `${design.width} / ${design.height}`, boxShadow: '0 8px 30px rgba(0,0,0,.18)' }}>
+            <DesignPage design={design} page={design.pages[i]} width="100%" height="100%" uidPrefix="v-" style={{ display: 'block' }} />
+          </div>
+        )}
         {n > 1 ? (
           <div className="row">
             <button className="btn btn-sm" disabled={i === 0} onClick={() => setI(i - 1)}>←</button>
@@ -52,21 +70,34 @@ export default function DesignViewer({ id, title, design, role, signedIn, likes:
       </div>
       <div className="row wrap">
         <button className={`btn ${liked ? 'active' : ''}`} onClick={like}>{liked ? '♥' : '♡'} {likes}</button>
-        <button className="btn" onClick={remix}>🔁 {role === 'owner' ? 'Make a copy' : 'Remix'}</button>
+        {perms.remix ? <button className="btn" onClick={remix}>🔁 {role === 'owner' ? 'Make a copy' : 'Remix'}</button> : null}
         <button className="btn" onClick={() => setModal('share')}>🔗 Share</button>
-        <div style={{ position: 'relative' }}>
-          <button className="btn" onClick={() => setModal(modal === 'dl' ? null : 'dl')}>⬇ Download</button>
-          {modal === 'dl' ? (
-            <div className="dropdown" style={{ left: 0, right: 'auto' }}>
-              <button onClick={() => download('png')}>🖼 PNG <small>this page</small></button>
-              {n > 1 ? <button onClick={() => download('png-all')}>🗂 PNG <small>all pages</small></button> : null}
-              <button onClick={() => download('jpg')}>📷 JPG <small>this page</small></button>
-              <button onClick={() => download('pdf')}>📄 PDF <small>all pages</small></button>
-            </div>
-          ) : null}
-        </div>
-        <a className="btn" href={`/d/${id}/print`} target="_blank" rel="noreferrer">🖨 Print</a>
-        <button className="btn" onClick={() => setModal('present')}>▶ Present</button>
+        {perms.download ? (
+          <div style={{ position: 'relative' }}>
+            <button className="btn" onClick={() => setModal(modal === 'dl' ? null : 'dl')}>⬇ Download</button>
+            {modal === 'dl' ? (
+              <div className="dropdown" style={{ left: 0, right: 'auto' }}>
+                {isDoc ? (
+                  <>
+                    <button onClick={() => download('doc')}>📝 Word <small>.doc</small></button>
+                    <button onClick={() => download('html')}>🌐 Web page <small>.html</small></button>
+                    <button onClick={() => download('txt')}>📃 Plain text <small>.txt</small></button>
+                    <button onClick={() => { setModal(null); window.open(`/d/${id}/print`, '_blank'); }}>📄 PDF <small>via print</small></button>
+                  </>
+                ) : (
+                  <>
+                    <button onClick={() => download('png')}>🖼 PNG <small>this page</small></button>
+                    {n > 1 ? <button onClick={() => download('png-all')}>🗂 PNG <small>all pages</small></button> : null}
+                    <button onClick={() => download('jpg')}>📷 JPG <small>this page</small></button>
+                    <button onClick={() => download('pdf')}>📄 PDF <small>all pages</small></button>
+                  </>
+                )}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+        {perms.print ? <a className="btn" href={`/d/${id}/print`} target="_blank" rel="noreferrer">🖨 Print</a> : null}
+        {!isDoc ? <button className="btn" onClick={() => setModal('present')}>▶ Present</button> : null}
         {busy ? <span className="muted small">{busy}</span> : null}
       </div>
       {modal === 'share' ? <ShareModal id={id} title={title} role={role} visibility={visibility} onVisibility={async (v) => {

@@ -19,7 +19,9 @@ export async function GET(request) {
   }
   const state = crypto.randomBytes(16).toString('base64url');
   const redirectUri = `${origin}/api/auth/callback`;
-  const res = NextResponse.redirect(authorizeUrl({ redirectUri, state }));
+  // ?social=1 also asks for Jace's "messages" permission, so designs can be shared to Jace Social chats.
+  const scope = url.searchParams.get('social') === '1' ? 'profile email messages' : 'profile email';
+  const res = NextResponse.redirect(authorizeUrl({ redirectUri, state, scope }));
   res.cookies.set('jd_oauth', sign({ state, next, silent, exp: Math.floor(Date.now() / 1000) + 600 }), {
     httpOnly: true, sameSite: 'lax', secure: origin.startsWith('https'), path: '/', maxAge: 600,
   });

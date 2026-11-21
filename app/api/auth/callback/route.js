@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { originOf, sessionCookie, verify } from '@/lib/auth';
+import { encrypt, originOf, sessionCookie, verify } from '@/lib/auth';
 import { exchangeCode, userinfo } from '@/lib/jace';
 import { q } from '@/lib/db';
 
@@ -30,6 +30,11 @@ export async function GET(request) {
          picture = EXCLUDED.picture, updated_at = NOW()`,
       [String(info.sub), info.username, info.name || info.username, info.picture || null]
     );
+    // Keep the access token (encrypted) so Jace Design can send Jace Social messages when you share.
+    const scope = String(token.scope || '');
+    const expires = new Date(Date.now() + (Number(token.expires_in) || 3600) * 1000);
+    await q('UPDATE users SET access_token = $2, token_expires = $3, token_scope = $4 WHERE id = $1',
+      [String(info.sub), encrypt(token.access_token), expires, scope]);
     const res = NextResponse.redirect(`${origin}${next}`);
     const c = sessionCookie(String(info.sub));
     res.cookies.set(c.name, c.value, c.options);

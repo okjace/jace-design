@@ -1,7 +1,8 @@
 import { handler, json, requireUser, getUser } from '@/lib/auth';
 import { q } from '@/lib/db';
-import { canEdit, loadDesign } from '@/lib/access';
+import { canEdit, cleanPerms, loadDesign } from '@/lib/access';
 import { normalizeDesign } from '@/lib/design';
+import { sanitizeDesign } from '@/lib/sanitize';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,7 +11,8 @@ export const GET = handler(async (_req, { params }) => {
   const user = await getUser();
   const { design, role } = await loadDesign(id, user);
   if (!design || !role) return json({ error: 'Not found' }, 404);
-  return json({ design: { id: design.id, title: design.title, data: design.data, visibility: design.visibility, owner_username: design.owner_username }, role });
+  return json({ design: { id: design.id, title: design.title, data: design.data, visibility: design.visibility, is_template: design.is_template, category: design.category, owner_username: design.owner_username,
+    ...(role === 'owner' ? { link_perms: design.link_perms, require_request: design.require_request } : {}) }, role });
 });
 
 export const PUT = handler(async (request, { params }) => {
@@ -22,12 +24,16 @@ export const PUT = handler(async (request, { params }) => {
   const sets = [];
   const vals = [id];
   if (body.design) {
-    const d = normalizeDesign(body.design);
-    vals.push(JSON.stringify(d)); sets.push(`data = $${vals.length}::jsonb`);
+    const d = sanitizeDesign(normalizeDesign(body.design));
+    vals.push(JSON.stringify(d)); sets.push(`data = $${vals.length}::text::jsonb`);
     vals.push(d.width); sets.push(`width = $${vals.length}`);
     vals.push(d.height); sets.push(`height = $${vals.length}`);
   }
   if (typeof body.title === 'string') { vals.push(body.title.slice(0, 120) || 'Untitled design'); sets.push(`title = $${vals.length}`); }
+  if (role === 'owner' && body.link_perms && typeof body.link_perms === 'object') { vals.push(JSON.stringify(cleanPerms(body.link_perms))); sets.push(`link_perms = $${vals.length}::text::jsonb`); }
+  if (role === 'owner' && typeof body.require_request === 'boolean') { vals.push(body.require_request); sets.push(`require_request = $${vals.length}`); }
+  if (role === 'owner' && typeof body.category === 'string') { vals.push(body.category.slice(0, 40)); sets.push(`category = $${vals.length}`); }
+  if (role === 'owner' && typeof body.is_template === 'boolean') { vals.push(body.is_template); sets.push(`is_template = $${vals.length}`); }
   if (role === 'owner' && ['private', 'link', 'public'].includes(body.visibility)) { vals.push(body.visibility); sets.push(`visibility = $${vals.length}`); }
   if (!sets.length) return json({ ok: true });
   await q(`UPDATE designs SET ${sets.join(', ')}, updated_at = NOW() WHERE id = $1`, vals);
