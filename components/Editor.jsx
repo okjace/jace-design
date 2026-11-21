@@ -17,7 +17,8 @@ import BrandKit, { useBrand } from './BrandKit';
 import VersionHistory from './VersionHistory';
 import Timeline from './Timeline';
 import { LiveLayer, useLive } from './LiveCursors';
-import { CHART_COLORS, CHART_TYPES, chartEl, chartToCsv, csvToChart, qrEl, resolveBg, tableEl } from '@/lib/blocks';
+import { CHART_COLORS, CHART_TYPES, audioEl, chartEl, chartToCsv, clipLength, csvToChart, qrEl, resolveBg, tableEl, videoEl } from '@/lib/blocks';
+import { audioDuration, uploadMedia, videoInfo } from '@/lib/media';
 import {
   EMOJI, FONTS, GRADIENTS, PRESET_GROUPS, SWATCHES, blankPage, emojiEl, imageEl, lineEl, normalizeDesign,
   scalePage, shapeEl, textEl, textFont, textHeight, uid, wrapText, ANIMATIONS, videoLength, TRANSITIONS, TRANSITION_NAMES,
@@ -130,6 +131,8 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
   const [visibility, setVisibility] = useState(initialVisibility);
   const [pageIdx, setPageIdx] = useState(0);
   const [selId, setSelId] = useState(null);
+  const [multi, setMulti] = useState([]); // several selected elements (ids)
+  const [marquee, setMarquee] = useState(null); // the box being dragged to select
   const [editingId, setEditingId] = useState(null);
   const [panel, setPanel] = useState('templates');
   const [zoom, setZoom] = useState(0.5);
@@ -157,14 +160,16 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
   const remoteRef = useRef(false); // true while loading someone else's saved changes (don't save them back)
   const addSticky = (color) => addEl(textEl({ text: 'Write something…', fontFamily: 'Caveat', fontSize: 44 * k, w: 340 * k, color: '#16181d', bgColor: color, lineHeight: 1.25 }));
 
-  function addAudio(file) {
-    if (file.size > 3_000_000) { alert('That file is too big. Music must be under 3 MB (about 3 minutes of MP3).'); return; }
-    const r = new FileReader();
-    r.onload = () => {
-      const src = String(r.result).replace(/^data:[^;]*;/, `data:${file.type && file.type.startsWith('audio/') ? file.type : 'audio/mpeg'};`);
+  async function addAudio(file) {
+    setBusy('Uploading music… 0%');
+    try {
+      const src = await uploadMedia(file, { onProgress: (p) => setBusy(`Uploading music… ${Math.round(p * 100)}%`) });
       commit((d) => ({ ...d, audio: { src, name: file.name.slice(0, 80), volume: 0.8 } }));
-    };
-    r.readAsDataURL(file);
+    } catch (e) {
+      alert(e.message || 'Could not add that music.');
+    } finally {
+      setBusy('');
+    }
   }
   // If the owner removes you (or makes you view-only) while you're editing, stop saving and say so.
   const lockedOut = useRef(false);
@@ -327,6 +332,20 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
       })),
     }));
     [td.font, td.headingFont].filter(Boolean).forEach((f) => loadFont({ fontFamily: f, fontWeight: 400 }));
+  }
+
+  async function removeBackground(el) {
+    if (el?.type !== 'image' || !el.src) return;
+    try {
+      const { removeBackground: run } = await import('@/lib/bgremove');
+      const src = await run(el.src, setBusy);
+      commit((d) => ({ ...d, assets: [{ id: uid(), src, width: el.w, height: el.h }, ...(d.assets || [])] }), { history: false });
+      updateEl(el.id, { src, filters: el.filters });
+    } catch (e) {
+      alert(`Couldn't remove the background: ${e.message || e}. It works best in an up-to-date Chrome, Edge or the desktop app.`);
+    } finally {
+      setBusy('');
+    }
   }
 
   // Icons are drawings fetched in one color; changing the color fetches it again in the new one.
@@ -556,8 +575,83 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
   }
 
   // ---------- uploads ----------
-  async function addFiles(files, { insert = true } = {}) {
-    const list = [...files].filter((f) => f.type.startsWith('image/'));
+  // Any file: photos, videos, sounds, PDFs (each page becomes a page), fonts and Jace Design files.
+  async function addFiles(files, opts) {
+    const list = [...files];
+    const images = list.filter((f) => f.type.startsWith('image/'));
+    if (images.length) await addImages(images, opts);
+    for (const f of list) {
+      if (f.type.startsWith('image/')) continue;
+      const name = (f.name || '').toLowerCase();
+      try {
+        if (f.type.startsWith('video/') || /\.(mp4|m4v|webm|mov)$/.test(name)) await addVideo(f);
+        else if (f.type.startsWith('audio/') || /\.(mp3|m4a|wav|ogg|flac|aac)$/.test(name)) await addSound(f);
+        else if (f.type === 'application/pdf' || name.endsWith('.pdf')) await addPdf(f);
+        else if (/\.(ttf|otf|woff2?)$/.test(name)) { await addFontFile(f); setPanel('text'); }
+        else if (name.endsWith('.json')) await addDesignFile(f);
+        else alert(`“${f.name}” isn't a kind of file Jace Design can use. Try photos, videos, sounds, PDFs, fonts or Jace Design files.`);
+      } catch (e) {
+        alert(e.message || `Could not add “${f.name}”.`);
+      } finally {
+        setBusy('');
+      }
+    }
+  }
+
+  async function addVideo(f) {
+    setBusy('Reading video…');
+    const info = await videoInfo(f);
+    const src = await uploadMedia(f, { onProgress: (p) => setBusy(`Uploading video… ${Math.round(p * 100)}%`) });
+    const a = { id: uid(), kind: 'video', src, poster: info.poster, width: info.width, height: info.height, duration: Math.round(info.duration * 10) / 10, name: f.name.slice(0, 80) };
+    commit((d) => ({ ...d, assets: [a, ...(d.assets || [])] }));
+    insertAsset(a);
+  }
+  async function addSound(f) {
+    setBusy('Uploading sound…');
+    const duration = await audioDuration(f);
+    const src = await uploadMedia(f, { onProgress: (p) => setBusy(`Uploading sound… ${Math.round(p * 100)}%`) });
+    const a = { id: uid(), kind: 'audio', src, name: f.name.slice(0, 80), duration: Math.round(duration * 10) / 10 };
+    if (isVideo && !designRef.current.audio) { commit((d) => ({ ...d, audio: { src, name: a.name, volume: 0.8 }, assets: [a, ...(d.assets || [])] })); return; }
+    commit((d) => ({ ...d, assets: [a, ...(d.assets || [])] }));
+    insertAsset(a);
+  }
+  async function addPdf(f) {
+    setBusy('Opening PDF…');
+    const pdfjs = await import(/* webpackIgnore: true */ 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs');
+    pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs';
+    const doc = await pdfjs.getDocument({ data: new Uint8Array(await f.arrayBuffer()) }).promise;
+    const n = Math.min(doc.numPages, 30);
+    const added = [];
+    for (let i = 1; i <= n; i++) {
+      setBusy(`Adding PDF page ${i} of ${n}…`);
+      const pg = await doc.getPage(i);
+      const vp1 = pg.getViewport({ scale: 1 });
+      const scale = Math.min(2.5, Math.max(1, (Math.max(W, H) * 1.3) / Math.max(vp1.width, vp1.height)));
+      const vp = pg.getViewport({ scale });
+      const c = document.createElement('canvas');
+      c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+      await pg.render({ canvasContext: ctx, viewport: vp }).promise;
+      const s2 = Math.min(W / c.width, H / c.height);
+      const w = c.width * s2, h = c.height * s2;
+      added.push({ ...blankPage(), elements: [imageEl({ src: c.toDataURL('image/jpeg', 0.85), x: (W - w) / 2, y: (H - h) / 2, w, h })] });
+    }
+    commit((d) => { const pages = [...d.pages]; const empty = !pages[pi].elements.length; pages.splice(empty ? pi : pi + 1, empty ? 1 : 0, ...added); return { ...d, pages }; });
+    if (page.elements.length) setPageIdx(pi + 1);
+    setSelId(null);
+    if (doc.numPages > n) alert(`Added the first ${n} pages of ${doc.numPages}.`);
+  }
+  async function addDesignFile(f) {
+    let j;
+    try { j = JSON.parse(await f.text()); } catch { throw new Error("That file isn't a Jace Design file."); }
+    const td = normalizeDesign(j?.design || j);
+    if (!td.pages?.length || td.kind === 'doc' || td.kind === 'sheet') throw new Error("That file doesn't have pages that can go into this design.");
+    applyTemplate({ make: () => td.pages, width: td.width, height: td.height });
+  }
+
+  async function addImages(files, { insert = true } = {}) {
+    const list = files;
     if (!list.length) return;
     setBusy('Uploading…');
     try {
@@ -577,7 +671,14 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
     }
   }
   const insertAsset = (a) => {
+    if (a.kind === 'audio') { addEl(audioEl({ src: a.src, name: a.name, duration: a.duration, w: 140 * k, h: 140 * k })); return; }
     const s = Math.min((W * 0.6) / a.width, (H * 0.6) / a.height);
+    if (a.kind === 'video') {
+      addEl(videoEl({ src: a.src, poster: a.poster, duration: a.duration, trimEnd: a.duration, w: a.width * s, h: a.height * s }));
+      // In a video, make the scene long enough for the clip.
+      if (isVideo && a.duration > (Number(page.duration) || 3)) commit((d) => mapPage(d, (p) => ({ ...p, duration: Math.min(60, Math.ceil(a.duration * 10) / 10) })), { history: false });
+      return;
+    }
     addEl(imageEl({ src: a.src, w: a.width * s, h: a.height * s }));
   };
 
@@ -595,7 +696,20 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
       if (mod && e.key.toLowerCase() === 'x') { if (sel) { clipRef.current = sel; deleteSel(); } return; }
       if (mod && e.key === ']') { e.preventDefault(); reorder(e.shiftKey ? 'front' : 'up'); return; }
       if (mod && e.key === '[') { e.preventDefault(); reorder(e.shiftKey ? 'back' : 'down'); return; }
-      if (e.key === 'Escape') { setSelId(null); setEditingId(null); setPen(null); return; }
+      if (e.key === 'Escape') { setSelId(null); setMulti([]); setEditingId(null); setPen(null); return; }
+      if (mod && e.key.toLowerCase() === 'a') { e.preventDefault(); selectIds(page.elements.filter((x) => !x.hidden && !x.locked).map((x) => x.id)); return; }
+      if (mod && e.key.toLowerCase() === 'g') {
+        e.preventDefault();
+        if (e.shiftKey) { if (multi.length) ungroupSel(); else if (sel?.group) updateSel({ group: undefined }); } else groupSel();
+        return;
+      }
+      if (multi.length > 1) {
+        if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteMany(); return; }
+        const st = e.shiftKey ? 10 : 1;
+        const mv = { ArrowLeft: [-st, 0], ArrowRight: [st, 0], ArrowUp: [0, -st], ArrowDown: [0, st] }[e.key];
+        if (mv) { e.preventDefault(); updateMany((x) => (x.locked ? {} : { x: x.x + mv[0], y: x.y + mv[1] })); }
+        return;
+      }
       if (!sel) return;
       if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSel(); return; }
       if (e.key === 'Enter' && sel.type === 'text') { e.preventDefault(); snapshot(); setEditingId(sel.id); return; }
@@ -683,12 +797,24 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
     if (pen) { startPen(e); return; }
     if (e.target.tagName === 'TEXTAREA' || e.target.classList?.contains('handle')) return;
     const target = e.target.closest?.('[data-id]');
-    if (!target) { setSelId(null); setEditingId(null); return; }
+    if (!target) { setEditingId(null); startMarquee(e); return; }
     const eid = target.getAttribute('data-id');
     const el = page.elements.find((x) => x.id === eid);
     if (!el) return;
     if (editingId && editingId !== eid) setEditingId(null);
-    setSelId(eid);
+    // Shift-click adds or removes things from the selection.
+    if (e.shiftKey) {
+      const cur = multi.length ? multi : selId ? [selId] : [];
+      const next = cur.includes(eid) ? cur.filter((x) => x !== eid) : [...cur, eid];
+      selectIds(next);
+      return;
+    }
+    // Clicking part of a group picks the whole group (Ctrl/⌘-click picks just that one).
+    let ids = [eid];
+    if (multi.includes(eid)) ids = multi;
+    else if (el.group && !(e.ctrlKey || e.metaKey)) ids = page.elements.filter((x) => x.group === el.group).map((x) => x.id);
+    selectIds(ids);
+    if (ids.length > 1) { e.preventDefault(); dragMany(e, ids); return; }
     if (el.locked) return;
     e.preventDefault();
     const start = { cx: e.clientX, cy: e.clientY, x: el.x, y: el.y };
@@ -710,6 +836,85 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
   }
+
+  // ---------- selecting several things ----------
+  function selectIds(ids) {
+    if (ids.length > 1) { setMulti(ids); setSelId(null); }
+    else { setMulti([]); setSelId(ids[0] || null); }
+  }
+  function startMarquee(e) {
+    e.preventDefault();
+    const p0 = toDesign(e);
+    const add = e.shiftKey ? (multi.length ? multi : selId ? [selId] : []) : [];
+    if (!e.shiftKey) selectIds([]);
+    let box = null;
+    const move = (ev) => {
+      const p = toDesign(ev);
+      box = { x: Math.min(p0.x, p.x), y: Math.min(p0.y, p.y), w: Math.abs(p.x - p0.x), h: Math.abs(p.y - p0.y) };
+      if (box.w * zoom > 3 || box.h * zoom > 3) setMarquee(box);
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      setMarquee(null);
+      if (!box || (box.w * zoom < 4 && box.h * zoom < 4)) return;
+      const hit = page.elements.filter((x) => !x.hidden && !x.locked && x.x < box.x + box.w && x.x + x.w > box.x && x.y < box.y + box.h && x.y + x.h > box.y).map((x) => x.id);
+      // Whole groups come along.
+      const groups = new Set(page.elements.filter((x) => hit.includes(x.id) && x.group).map((x) => x.group));
+      const all = page.elements.filter((x) => hit.includes(x.id) || (x.group && groups.has(x.group))).map((x) => x.id);
+      selectIds([...new Set([...add, ...all])]);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }
+  function dragMany(e, ids) {
+    const start = { cx: e.clientX, cy: e.clientY };
+    const from = new Map(page.elements.filter((x) => ids.includes(x.id) && !x.locked).map((x) => [x.id, { x: x.x, y: x.y }]));
+    let moved = false;
+    const move = (ev) => {
+      if (!moved && Math.hypot(ev.clientX - start.cx, ev.clientY - start.cy) < 3) return;
+      if (!moved) { moved = true; snapshot(); }
+      const dx = (ev.clientX - start.cx) / zoom, dy = (ev.clientY - start.cy) / zoom;
+      commit((d) => mapPage(d, (p) => ({ ...p, elements: p.elements.map((x) => (from.has(x.id) ? { ...x, x: from.get(x.id).x + dx, y: from.get(x.id).y + dy } : x)) })), { history: false });
+    };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }
+  const multiEls = page.elements.filter((x) => multi.includes(x.id));
+  const multiBox = multiEls.length > 1 ? (() => {
+    const x0 = Math.min(...multiEls.map((x) => x.x)), y0 = Math.min(...multiEls.map((x) => x.y));
+    return { x: x0, y: y0, w: Math.max(...multiEls.map((x) => x.x + x.w)) - x0, h: Math.max(...multiEls.map((x) => x.y + x.h)) - y0 };
+  })() : null;
+  const updateMany = (fn, opts) => commit((d) => mapPage(d, (p) => ({ ...p, elements: p.elements.map((x) => (multi.includes(x.id) ? fixEl({ ...x, ...fn(x) }) : x)) })), opts);
+  const groupSel = () => { if (multi.length > 1) { const g = uid(); updateMany(() => ({ group: g })); } };
+  const ungroupSel = () => updateMany(() => ({ group: undefined }));
+  const deleteMany = () => { commit((d) => mapPage(d, (p) => ({ ...p, elements: p.elements.filter((x) => !multi.includes(x.id)) }))); setMulti([]); };
+  const duplicateMany = () => {
+    const g = new Map();
+    const copies = multiEls.map((x) => ({ ...x, id: uid(), x: x.x + 24 * k, y: x.y + 24 * k, locked: false, group: x.group ? (g.get(x.group) || g.set(x.group, uid()).get(x.group)) : undefined }));
+    commit((d) => mapPage(d, (p) => ({ ...p, elements: [...p.elements, ...copies] })));
+    setMulti(copies.map((x) => x.id));
+  };
+  function alignMany(how) {
+    const b = multiBox;
+    if (!b) return;
+    updateMany((x) => ({
+      left: { x: b.x }, center: { x: b.x + (b.w - x.w) / 2 }, right: { x: b.x + b.w - x.w },
+      top: { y: b.y }, middle: { y: b.y + (b.h - x.h) / 2 }, bottom: { y: b.y + b.h - x.h },
+    }[how]));
+  }
+  function distribute(axis) {
+    const list = [...multiEls].sort((a, b) => (axis === 'x' ? a.x - b.x : a.y - b.y));
+    if (list.length < 3) return;
+    const size = axis === 'x' ? 'w' : 'h';
+    const first = list[0][axis], last = list[list.length - 1][axis] + list[list.length - 1][size];
+    const gap = (last - first - list.reduce((n, x) => n + x[size], 0)) / (list.length - 1);
+    let at = first;
+    const pos = new Map(list.map((x) => { const v = at; at += x[size] + gap; return [x.id, v]; }));
+    updateMany((x) => ({ [axis]: pos.get(x.id) }));
+  }
+  useEffect(() => { setMulti([]); }, [pi]);
 
   function onCanvasDouble(e) {
     const target = e.target.closest?.('[data-id]');
@@ -943,7 +1148,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
             weight: (w) => { if (sel?.type !== 'text') return; updateSel({ fontWeight: w }); loadFont({ ...sel, fontWeight: w }); },
             uploadFont: addFontFile,
             addGoogleFont,
-            setBg, toBackground, bgToImage, deleteSel, duplicateSel, reorder, alignSel,
+            setBg, toBackground, bgToImage, deleteSel, duplicateSel, reorder, alignSel, removeBg: removeBackground,
             copy: () => { if (sel) clipRef.current = sel; },
             paste: () => { if (clipRef.current) { const c = { ...clipRef.current, id: uid(), x: clipRef.current.x + 24 * k, y: clipRef.current.y + 24 * k }; clipRef.current = c; addEl(c, { center: false }); } },
             editText: () => { if (sel?.type === 'text') { snapshot(); setEditingId(sel.id); } },
@@ -1168,19 +1373,22 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
 
           {panel === 'uploads' ? (
             <>
-              <button className="btn btn-primary" style={{ width: '100%' }} onClick={() => uploadRef.current?.click()}>☁️ Upload images</button>
-              <input ref={uploadRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
-              <p className="small muted">You can also drag images onto the canvas, or paste them with Ctrl/⌘+V.</p>
+              <button className="btn btn-primary" style={{ width: '100%' }} onClick={() => uploadRef.current?.click()}>☁️ Upload files</button>
+              <input ref={uploadRef} type="file" accept="image/*,video/*,audio/*,.pdf,application/pdf,.ttf,.otf,.woff,.woff2,.json" multiple hidden onChange={(e) => { const fl = [...e.target.files]; e.target.value = ''; addFiles(fl); }} />
+              <p className="small muted">Photos, SVGs and GIFs · videos (MP4, WebM, up to 60 MB) · sounds (MP3, M4A, WAV) · PDFs (each page becomes a page) · fonts · Jace Design files. Drag files onto the canvas or paste them too.</p>
               <h4>Your uploads</h4>
               {design.assets?.length ? (
                 <div className="tile-grid cols-2">
                   {design.assets.map((a) => (
                     <div key={a.id} style={{ position: 'relative' }}>
-                      <button className="tile" style={{ padding: 0, width: '100%' }} onClick={() => insertAsset(a)} title={a.credit ? `Add to page · ${a.credit}` : 'Add to page'}>
-                        <img src={a.src} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      <button className="tile" style={{ padding: 0, width: '100%', position: 'relative' }} onClick={() => insertAsset(a)} title={a.credit ? `Add to page · ${a.credit}` : `Add to page${a.name ? ` · ${a.name}` : ''}`}>
+                        {a.kind === 'audio'
+                          ? <span className="asset-sound">🔊<small>{a.name}</small></span>
+                          : <img src={a.kind === 'video' ? a.poster : a.src} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
+                        {a.kind === 'video' ? <span className="asset-badge">▶ {Math.round(a.duration || 0)}s</span> : null}
                       </button>
                       <div className="row" style={{ position: 'absolute', bottom: 4, right: 4, gap: 4 }}>
-                        <button className="btn btn-sm" style={{ padding: '2px 6px' }} title="Use as background" onClick={() => setBg({ type: 'image', src: a.src, color: '#ffffff' })}>🖼</button>
+                        {!a.kind ? <button className="btn btn-sm" style={{ padding: '2px 6px' }} title="Use as background" onClick={() => setBg({ type: 'image', src: a.src, color: '#ffffff' })}>🖼</button> : null}
                         <button className="btn btn-sm" style={{ padding: '2px 6px' }} title="Remove from uploads" onClick={() => commit((d) => ({ ...d, assets: d.assets.filter((x) => x.id !== a.id) }))}>✕</button>
                       </div>
                     </div>
@@ -1265,9 +1473,9 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
           <div
             className="ed-scroll"
             ref={scrollRef}
-            onPointerDown={(e) => { if (e.target === scrollRef.current) { setSelId(null); setEditingId(null); } }}
+            onPointerDown={(e) => { if (e.target === scrollRef.current) { setSelId(null); setMulti([]); setEditingId(null); } }}
             onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => { e.preventDefault(); addFiles(e.dataTransfer.files); }}
+            onDrop={(e) => { e.preventDefault(); addFiles([...e.dataTransfer.files]); }}
             onWheel={(e) => { if (e.ctrlKey || e.metaKey) { e.preventDefault(); setAutoFit(false); setZoom((z) => Math.max(0.05, Math.min(4, z * (e.deltaY > 0 ? 0.9 : 1.1)))); } }}
           >
             <div className="ed-canvas-wrap" ref={wrapRef} style={{ width: W * zoom, height: H * zoom, background: page.background?.type === 'none' ? 'repeating-conic-gradient(#ddd 0 25%, #fff 0 50%) 0 0 / 20px 20px' : undefined }}
@@ -1292,6 +1500,15 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
                   <polyline points={stroke.map((p) => `${p.x},${p.y}`).join(' ')} fill="none" stroke={pen?.color} strokeWidth={pen?.width} strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               ) : null}
+              {multiBox ? (
+                <>
+                  {multiEls.map((x) => <div key={x.id} className="multi-box" style={{ left: x.x * zoom, top: x.y * zoom, width: x.w * zoom, height: x.h * zoom, transform: `rotate(${x.rotation || 0}deg)` }} />)}
+                  <div className="multi-bounds" style={{ left: multiBox.x * zoom, top: multiBox.y * zoom, width: multiBox.w * zoom, height: multiBox.h * zoom }}>
+                    <span>{multiEls.length} selected{multiEls.every((x) => x.group && x.group === multiEls[0].group) ? ' · group' : ''}</span>
+                  </div>
+                </>
+              ) : null}
+              {marquee ? <div className="marquee" style={{ left: marquee.x * zoom, top: marquee.y * zoom, width: marquee.w * zoom, height: marquee.h * zoom }} /> : null}
               {sel && !editingId ? (
                 <div className={`sel-box ${sel.locked ? 'locked' : ''}`} style={{ left: sel.x * zoom, top: sel.y * zoom, width: sel.w * zoom, height: sel.h * zoom, transform: `rotate(${sel.rotation || 0}deg)` }}>
                   {handles.map((h) => (
@@ -1351,13 +1568,48 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
 
         {/* ---------- right: properties ---------- */}
         <div className="ed-side">
-          {sel ? (
+          {multiBox ? (
+            <>
+              <h4>{multiEls.length} things selected</h4>
+              <div className="toggle-row">
+                {multiEls.every((x) => x.group && x.group === multiEls[0].group)
+                  ? <button className="btn" onClick={ungroupSel} title="Ctrl/⌘ + Shift + G">Ungroup</button>
+                  : <button className="btn btn-primary" onClick={groupSel} title="Ctrl/⌘ + G">Group</button>}
+                <button className="btn" onClick={duplicateMany}>⧉ Duplicate</button>
+                <button className="btn btn-danger" onClick={deleteMany}>🗑 Delete</button>
+              </div>
+              <h4>Line up</h4>
+              <div className="toggle-row">
+                {[['left', '⇤'], ['center', '↔'], ['right', '⇥'], ['top', '⤒'], ['middle', '↕'], ['bottom', '⤓']].map(([a, i]) => (
+                  <button key={a} className="btn" title={`Align ${a}`} onClick={() => alignMany(a)}>{i}</button>
+                ))}
+              </div>
+              <div className="toggle-row">
+                <button className="btn" disabled={multiEls.length < 3} onClick={() => distribute('x')}>Space evenly ↔</button>
+                <button className="btn" disabled={multiEls.length < 3} onClick={() => distribute('y')}>Space evenly ↕</button>
+              </div>
+              <h4>Look</h4>
+              <Range label="Transparency" min={0} max={100} value={Math.round((1 - (multiEls[0].opacity ?? 1)) * 100)} onChange={(v) => updateMany(() => ({ opacity: 1 - v / 100 }))} suffix="%" />
+              <div className="toggle-row">
+                <button className="btn" onClick={() => updateMany((x) => ({ locked: !multiEls.every((y) => y.locked) }))}>{multiEls.every((y) => y.locked) ? '🔓 Unlock all' : '🔒 Lock all'}</button>
+              </div>
+              <ul className="small muted" style={{ paddingLeft: 18 }}>
+                <li>Drag any of them to move them all</li>
+                <li>Shift-click to add or remove one</li>
+                <li>Ctrl/⌘-click one item of a group to pick just it</li>
+              </ul>
+            </>
+          ) : sel ? (
             <Props
               el={sel} update={updateSel} k={k} fonts={fontList} colors={colors} isVideo={isVideo} isSite={isSite} pages={design.pages}
               canAnimate={!isSite && !isBoard} recolorIcon={(c) => recolorIcon(sel, c)}
               onPreview={() => setModal(isVideo ? 'play' : 'present')}
               onFont={(e) => loadFont(e)}
-              actions={{ deleteSel, duplicateSel, reorder, alignSel, replace: () => replaceRef.current?.click(), setBg: () => toBackground(sel), aiText: () => setAi('text') }}
+              actions={{
+                deleteSel, duplicateSel, reorder, alignSel, replace: () => replaceRef.current?.click(), setBg: () => toBackground(sel), aiText: () => setAi('text'),
+                fitScene: isVideo ? () => commit((d) => mapPage(d, (p) => ({ ...p, duration: Math.min(60, Math.ceil((clipLength(sel) + (Number(sel.anim?.delay) || 0)) * 10) / 10) }))) : null,
+                removeBg: () => removeBackground(sel),
+              }}
             />
           ) : (
             <>
@@ -1388,7 +1640,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
                     </>
                   ) : (
                     <>
-                      <button className="btn btn-sm" onClick={() => audioRef.current?.click()}>🎵 Add music (MP3, up to 3 MB)</button>
+                      <button className="btn btn-sm" onClick={() => audioRef.current?.click()}>🎵 Add music</button>
                       <div className="small muted" style={{ marginTop: 4 }}>Only use music you have the rights to.</div>
                     </>
                   )}
@@ -1459,6 +1711,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
                 <li>Shift while resizing keeps proportions</li>
                 <li>Hold Alt while dragging to turn off snapping</li>
                 <li>Ctrl/⌘ + D duplicates, + Z undoes</li>
+                <li>Drag on an empty spot to select several things, Ctrl/⌘ + G groups them</li>
                 <li>Ctrl/⌘ + scroll zooms</li>
               </ul>
             </>
@@ -1719,6 +1972,7 @@ function Props({ el, update, actions, onFont, k, fonts = FONTS, colors = [], isV
             <button className={`btn ${el.flipY ? 'active' : ''}`} onClick={() => update({ flipY: !el.flipY })}>⇵ Flip</button>
             <button className={`btn ${el.fit === 'contain' ? 'active' : ''}`} onClick={() => update({ fit: el.fit === 'contain' ? 'cover' : 'contain' })}>Fit whole</button>
           </div>
+          {!el.icon ? <button className="btn btn-sm" style={{ marginTop: 6, width: '100%' }} onClick={actions.removeBg}>✂️ Remove background</button> : null}
           <h4>Rounded corners</h4>
           <Range label="Corners" min={0} max={Math.round(Math.min(el.w, el.h) / 2)} value={Math.round(el.radius || 0)} onChange={(v) => update({ radius: v })} />
           <div className="toggle-row">
@@ -1758,6 +2012,36 @@ function Props({ el, update, actions, onFont, k, fonts = FONTS, colors = [], isV
           <h4>Pen stroke</h4>
           <ColorRow label="Color" value={el.stroke} onChange={(c) => update({ stroke: c })} colors={colors} />
           <Range label="Thickness" min={1} max={Math.max(40, 60 * k)} value={el.strokeWidth || 6} onChange={(v) => update({ strokeWidth: v })} />
+        </>
+      ) : null}
+
+      {el.type === 'video' ? (
+        <>
+          <h4>Video clip</h4>
+          <div className="small muted">{Math.round((Number(el.duration) || 0) * 10) / 10}s long · plays for {Math.round(clipLength(el) * 10) / 10}s</div>
+          <div className="prop" style={{ marginTop: 6 }}>
+            <Num label="Start at (s)" value={Number(el.trimStart) || 0} step={0.1} min={0} onChange={(v) => update({ trimStart: Math.max(0, Math.min(v, (Number(el.trimEnd) || Number(el.duration) || v + 1) - 0.1)) })} />
+            <Num label="End at (s)" value={Number(el.trimEnd) || Number(el.duration) || 0} step={0.1} min={0} onChange={(v) => update({ trimEnd: Math.max((Number(el.trimStart) || 0) + 0.1, Math.min(v, Number(el.duration) || v)) })} />
+          </div>
+          <div className="toggle-row">
+            <button className={`btn ${el.muted ? 'active' : ''}`} onClick={() => update({ muted: !el.muted })}>{el.muted ? '🔇 Muted' : '🔊 Sound on'}</button>
+            <button className={`btn ${el.loop ? 'active' : ''}`} onClick={() => update({ loop: !el.loop })}>🔁 Loop</button>
+            <button className={`btn ${el.fit === 'contain' ? 'active' : ''}`} onClick={() => update({ fit: el.fit === 'contain' ? 'cover' : 'contain' })}>Fit whole</button>
+          </div>
+          {!el.muted ? <Range label="Volume" min={0} max={100} value={Math.round((el.volume ?? 1) * 100)} suffix="%" onChange={(v) => update({ volume: v / 100 })} /> : null}
+          <Range label="Corners" min={0} max={Math.round(Math.min(el.w, el.h) / 2)} value={Math.round(el.radius || 0)} onChange={(v) => update({ radius: v })} />
+          {actions.fitScene ? <button className="btn btn-sm" style={{ marginTop: 6 }} onClick={actions.fitScene}>Make the scene as long as the clip</button> : null}
+          {!isVideo ? <div className="small muted" style={{ marginTop: 6 }}>Plays when presenting, on the view page and on websites.</div> : null}
+        </>
+      ) : null}
+
+      {el.type === 'audio' ? (
+        <>
+          <h4>Sound</h4>
+          <div className="small muted">{el.name}{el.duration ? ` · ${Math.round(el.duration)}s` : ''}</div>
+          <ColorRow label="Button color" value={el.color} onChange={(c) => update({ color: c })} colors={colors} />
+          <div className="toggle-row"><button className={`btn ${el.loop ? 'active' : ''}`} onClick={() => update({ loop: !el.loop })}>🔁 Loop</button></div>
+          <div className="small muted" style={{ marginTop: 6 }}>A play button when presenting, on the view page and on websites.</div>
         </>
       ) : null}
 

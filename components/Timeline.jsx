@@ -3,18 +3,24 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import DesignPage from './DesignPage';
 import { videoLength } from '@/lib/design';
+import { clipLength } from '@/lib/blocks';
+import { uploadMedia } from '@/lib/media';
 
 const fmt = (s) => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, '0')}`;
 const elName = (e) => (e.type === 'text' ? e.text.slice(0, 24) || 'Text' : e.type === 'image' ? (e.icon ? 'Icon' : 'Photo') : e.type === 'shape' ? e.shape : e.type);
 const sceneStart = (design, i) => design.pages.slice(0, i).reduce((s, p) => s + (Number(p.duration) || 3), 0);
 
 /** Draws one moment of the video over the editor canvas (shown while playing or scrubbing). */
-function FrameCanvas({ design, t, width, height }) {
+function FrameCanvas({ design, t, width, height, playing, silent }) {
   const ref = useRef(null);
   const ready = useRef(null);
   const busy = useRef(false);
   const want = useRef(t);
   want.current = t;
+  const playingRef = useRef(playing);
+  playingRef.current = playing;
+  const silentRef = useRef(silent);
+  silentRef.current = silent;
   useEffect(() => {
     ready.current = (async () => {
       const [{ ensureFonts, preloadImages }, { registerFonts }] = await Promise.all([import('@/lib/export'), import('@/lib/fonts')]);
@@ -35,6 +41,7 @@ function FrameCanvas({ design, t, width, height }) {
       try {
         await ready.current;
         const { drawFrame } = await import('@/lib/video');
+        const live = playingRef.current;
         let done = null;
         while (ref.current && done !== want.current) {
           done = want.current;
@@ -42,7 +49,7 @@ function FrameCanvas({ design, t, width, height }) {
           const ctx = c.getContext('2d');
           ctx.save();
           ctx.setTransform(c.width / design.width, 0, 0, c.height / design.height, 0, 0);
-          await drawFrame(ctx, design, Math.min(done, Math.max(0, videoLength(design) - 0.001)));
+          await drawFrame(ctx, design, Math.min(done, Math.max(0, videoLength(design) - 0.001)), { playing: live, silent: silentRef.current });
           ctx.restore();
         }
       } finally { busy.current = false; }
@@ -63,7 +70,10 @@ export default function Timeline({ design, pi, setPi, selId, setSelId, wrapEl, z
   const [boxW, setBoxW] = useState(800);
   const boxRef = useRef(null);
   const raf = useRef(0);
-  const audio = useRef(null);
+  const audio = useRef(null); // music + voiceover while playing
+  const [rec, setRec] = useState(null); // { start } while recording a voiceover
+  const [msg, setMsg] = useState('');
+  const recRef = useRef(null);
   const tRef = useRef(t);
   tRef.current = t;
   const LABEL = 110;
@@ -84,32 +94,68 @@ export default function Timeline({ design, pi, setPi, selId, setSelId, wrapEl, z
     cancelAnimationFrame(raf.current);
     setPlaying(false);
     audio.current?.pause();
+    audio.current = null;
+    import('@/lib/video').then((m) => m.stopClips());
+    if (recRef.current?.state === 'recording') recRef.current.stop();
   }, []);
 
-  const play = () => {
-    if (playing) { pause(); return; }
-    let from = tRef.current >= total - 0.05 ? 0 : tRef.current;
+  const play = async (opts = {}) => {
+    if (playing && !opts.force) { pause(); return; }
+    const from = tRef.current >= total - 0.05 ? 0 : tRef.current;
     const t0 = performance.now() - from * 1000;
     setPreview(true);
     setPlaying(true);
-    if (design.audio?.src) {
-      if (!audio.current || audio.current.dataset.src !== design.audio.src.slice(0, 64)) {
-        audio.current = new Audio(design.audio.src);
-        audio.current.loop = true;
-        audio.current.dataset.src = design.audio.src.slice(0, 64);
-      }
-      audio.current.volume = design.audio.volume ?? 0.8;
-      try { audio.current.currentTime = from; } catch {}
-      audio.current.play().catch(() => {});
+    if (!opts.silent) {
+      const { makeSoundtrack } = await import('@/lib/video');
+      audio.current = makeSoundtrack(design);
+      audio.current.play(from);
     }
     const tick = () => {
       const now = (performance.now() - t0) / 1000;
       if (now >= total) { setT(total); pause(); return; }
       setT(now);
+      audio.current?.tick(now);
       raf.current = requestAnimationFrame(tick);
     };
     raf.current = requestAnimationFrame(tick);
   };
+
+  // Voiceover: record from the microphone while the video plays (without its sound), from the playhead.
+  async function recordVoice() {
+    if (rec) { pause(); return; }
+    setMsg('');
+    let mic;
+    try {
+      mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+    } catch {
+      setMsg('Microphone blocked. Allow it in your browser (the icon in the address bar) and try again.');
+      return;
+    }
+    const type = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'].find((m) => window.MediaRecorder && MediaRecorder.isTypeSupported(m));
+    const r = new MediaRecorder(mic, type ? { mimeType: type } : undefined);
+    const chunks = [];
+    const start = tRef.current >= total - 0.05 ? 0 : tRef.current;
+    const began = performance.now();
+    r.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+    r.onstop = async () => {
+      mic.getTracks().forEach((tr) => tr.stop());
+      setRec(null);
+      const duration = (performance.now() - began) / 1000;
+      if (duration < 0.4 || !chunks.length) return;
+      const blob = new Blob(chunks, { type: (r.mimeType || 'audio/webm').split(';')[0] });
+      try {
+        setMsg('Saving voiceover… 0%');
+        const src = await uploadMedia(blob, { name: 'Voiceover', onProgress: (p) => setMsg(`Saving voiceover… ${Math.round(p * 100)}%`) });
+        snapshot();
+        commit((d) => ({ ...d, voiceover: { src, start: Math.round(start * 10) / 10, duration: Math.round(duration * 10) / 10, volume: 1, name: 'Voiceover' } }), { history: false });
+        setMsg('');
+      } catch (e) { setMsg(e.message || 'Could not save the voiceover.'); }
+    };
+    recRef.current = r;
+    setRec({ start });
+    r.start(500);
+    play({ force: true, silent: true });
+  }
   useEffect(() => () => { cancelAnimationFrame(raf.current); audio.current?.pause(); }, []);
 
   // Space plays/pauses (when not typing), Esc goes back to editing.
@@ -179,11 +225,12 @@ export default function Timeline({ design, pi, setPi, selId, setSelId, wrapEl, z
   return (
     <div className="timeline">
       <div className="tl-bar">
-        <button className="btn btn-sm btn-primary" onClick={play} title="Play / pause (Space)">{playing ? '⏸ Pause' : '▶ Play'}</button>
+        <button className="btn btn-sm btn-primary" onClick={() => play()} title="Play / pause (Space)">{playing && !rec ? '⏸ Pause' : '▶ Play'}</button>
+        <button className={`btn btn-sm ${rec ? 'btn-danger active' : ''}`} onClick={recordVoice} title="Record your voice over the video, starting at the playhead">{rec ? '⏹ Stop recording' : '🎙 Voiceover'}</button>
         <span className="tl-time">{fmt(t)} / {fmt(total)}</span>
         {preview ? <button className="btn btn-sm" onClick={() => { pause(); setPreview(false); }}>✏️ Back to editing</button> : null}
         <div className="grow" />
-        <span className="small muted">Drag a scene's edge to change its length · drag a bar to time an animation</span>
+        <span className="small muted">{msg || (rec ? '🔴 Recording… talk now' : "Drag a scene's edge to change its length · drag a bar to time an animation")}</span>
         <button className="btn btn-sm" onClick={onAddScene}>＋ Scene</button>
       </div>
       <div className="tl-scroll" ref={boxRef}>
@@ -214,6 +261,18 @@ export default function Timeline({ design, pi, setPi, selId, setSelId, wrapEl, z
               <div className="tl-track"><div className="tl-audio" style={{ width: total * pps - 2 }}>{design.audio.name}</div></div>
             </div>
           ) : null}
+          {design.voiceover ? (
+            <div className="tl-row">
+              <div className="tl-label">🎙 Voiceover</div>
+              <div className="tl-track">
+                <div className="tl-audio tl-voice" style={{ left: (Number(design.voiceover.start) || 0) * pps, width: Math.max(12, (Number(design.voiceover.duration) || 1) * pps) }}
+                  title="Drag to move it" onPointerDown={(e) => { const s0 = Number(design.voiceover.start) || 0; drag(e, (ds) => commit((d) => ({ ...d, voiceover: { ...d.voiceover, start: Math.max(0, snap(s0 + ds)) } }), { history: false })); }}>
+                  {design.voiceover.name || 'Voiceover'}
+                  <button title="Remove the voiceover" onPointerDown={(e) => e.stopPropagation()} onClick={() => commit((d) => { const { voiceover, ...rest } = d; return rest; })}>✕</button>
+                </div>
+              </div>
+            </div>
+          ) : null}
           {[...page.elements].reverse().map((e) => {
             const a = e.anim || {};
             const on = a.type && a.type !== 'none';
@@ -225,6 +284,9 @@ export default function Timeline({ design, pi, setPi, selId, setSelId, wrapEl, z
                 <div className="tl-label" title={elName(e)}>{elName(e)}</div>
                 <div className="tl-track">
                   <div className="tl-scene-span" style={{ left: start * pps, width: sd * pps - 2 }} />
+                  {e.type === 'video' ? (
+                    <div className="tl-clipbar" style={{ left: (start + (on ? Math.min(delay, sd) : 0)) * pps, width: Math.max(6, Math.min(clipLength(e), sd) * pps) }} title={`Clip plays for ${Math.round(clipLength(e) * 10) / 10}s`} />
+                  ) : null}
                   {on ? (
                     <div className="tl-anim" style={{ left: (start + Math.min(delay, sd)) * pps, width: Math.max(6, dur * pps) }} title={`${a.type} · starts at ${delay}s · takes ${dur}s`}
                       onPointerDown={(ev) => { setSelId(e.id); drag(ev, (ds) => setAnim(e.id, { delay: Math.max(0, Math.min(sd, snap(delay + ds))) })); }}>
@@ -243,7 +305,7 @@ export default function Timeline({ design, pi, setPi, selId, setSelId, wrapEl, z
       </div>
       {preview && wrapEl ? createPortal(
         <div className="tl-preview" onPointerDown={(e) => { e.stopPropagation(); pause(); setPreview(false); }} title="Click to go back to editing">
-          <FrameCanvas design={design} t={t} width={design.width * zoom} height={design.height * zoom} />
+          <FrameCanvas design={design} t={t} width={design.width * zoom} height={design.height * zoom} playing={playing} silent={!!rec} />
           {!playing ? <div className="tl-preview-tag">Preview at {fmt(t)} · click to edit</div> : null}
         </div>,
         wrapEl

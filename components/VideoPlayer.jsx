@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { drawFrame, sceneAt, videoLength } from '@/lib/video';
+import { drawFrame, makeSoundtrack, sceneAt, stopClips, videoLength } from '@/lib/video';
 import { ensureFonts, preloadImages } from '@/lib/export';
 import { registerFonts } from '@/lib/fonts';
 
@@ -19,14 +19,14 @@ export default function VideoPlayer({ design, autoPlay = false, startAt = 0, onC
   const drawing = useRef(false);
   const total = Math.max(0.1, videoLength(design));
 
-  const paint = useCallback(async (time) => {
+  const paint = useCallback(async (time, live = false) => {
     const c = canvasRef.current;
     if (!c || drawing.current) return;
     drawing.current = true;
     const ctx = c.getContext('2d');
     ctx.save();
     ctx.setTransform(c.width / design.width, 0, 0, c.height / design.height, 0, 0);
-    try { await drawFrame(ctx, design, Math.min(time, total - 0.001)); } finally { ctx.restore(); drawing.current = false; }
+    try { await drawFrame(ctx, design, Math.min(time, total - 0.001), { playing: live }); } finally { ctx.restore(); drawing.current = false; }
   }, [design, total]);
 
   // Size the canvas to its box (sharp on HiDPI screens), and get fonts and images ready.
@@ -68,18 +68,15 @@ export default function VideoPlayer({ design, autoPlay = false, startAt = 0, onC
     cancelAnimationFrame(raf.current);
     setPlaying(false);
     audioRef.current?.pause();
+    stopClips();
   }, []);
 
   const play = useCallback(() => {
     if (tRef.current >= total - 0.05) tRef.current = 0;
     startRef.current = performance.now() - tRef.current * 1000;
     setPlaying(true);
-    if (design.audio?.src) {
-      if (!audioRef.current) { audioRef.current = new Audio(design.audio.src); audioRef.current.loop = true; }
-      audioRef.current.volume = design.audio.volume ?? 0.8;
-      audioRef.current.currentTime = tRef.current % (audioRef.current.duration || Infinity);
-      audioRef.current.play().catch(() => {});
-    }
+    if (!audioRef.current) audioRef.current = makeSoundtrack(design);
+    audioRef.current.play(tRef.current);
     const tick = () => {
       const now = (performance.now() - startRef.current) / 1000;
       if (now >= total) {
@@ -88,14 +85,15 @@ export default function VideoPlayer({ design, autoPlay = false, startAt = 0, onC
       }
       tRef.current = now;
       setT(now);
-      paint(now);
+      audioRef.current?.tick(now);
+      paint(now, true);
       raf.current = requestAnimationFrame(tick);
     };
     raf.current = requestAnimationFrame(tick);
   }, [design.audio, paint, stop, total]);
 
   useEffect(() => { if (ready && autoPlay) play(); }, [ready]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => () => { cancelAnimationFrame(raf.current); audioRef.current?.pause(); }, []);
+  useEffect(() => () => { cancelAnimationFrame(raf.current); audioRef.current?.pause(); stopClips(); }, []);
 
   useEffect(() => {
     const onKey = (e) => {

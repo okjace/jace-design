@@ -171,6 +171,7 @@ export default function ContextMenu({ x, y, el, page, pages = [], isSite = false
           {el.type === 'image' ? (
             <>
               <Item icon="🖼" label="Make image the background" onClick={run(() => act.toBackground(el))} />
+              <Item icon="✂️" label="Remove background" onClick={run(() => act.removeBg(el))} />
               <Item icon="🔁" label="Replace image" onClick={run(act.replace)} />
               <Item icon="⇋" label="Flip horizontally" onClick={() => act.update({ flipX: !el.flipX })} />
               <Item icon="⇵" label="Flip vertically" onClick={() => act.update({ flipY: !el.flipY })} />

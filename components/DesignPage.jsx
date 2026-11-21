@@ -1,5 +1,5 @@
 import { filterCss, HEART_PATH, lineBaseline, shapePoints, textLines } from '@/lib/design';
-import { BLOCK_TYPES, blockShapes, resolveBg } from '@/lib/blocks';
+import { BLOCK_TYPES, SPEAKER, blockShapes, resolveBg } from '@/lib/blocks';
 
 // Renders one page of a design as SVG. Pure (no hooks) so it works on the server and the client.
 
@@ -53,7 +53,7 @@ export function gradientVector(angle = 135) {
   return { x1: 0.5 - Math.cos(a) / 2, y1: 0.5 - Math.sin(a) / 2, x2: 0.5 + Math.cos(a) / 2, y2: 0.5 + Math.sin(a) / 2 };
 }
 
-export function Element({ el, pid }) {
+export function Element({ el, pid, media }) {
   if (el.hidden) return null;
   const cx = el.x + el.w / 2;
   const cy = el.y + el.h / 2;
@@ -139,6 +139,58 @@ export function Element({ el, pid }) {
     );
   }
 
+  if (el.type === 'video') {
+    const clip = `vclip-${key}`;
+    const frag = el.trimStart || el.trimEnd ? `#t=${Number(el.trimStart) || 0}${el.trimEnd ? `,${el.trimEnd}` : ''}` : '';
+    if (media && el.src) {
+      // Presenting, websites, the view page: a real player.
+      return (
+        <g {...common}>
+          <foreignObject x={el.x} y={el.y} width={el.w} height={el.h}>
+            <video xmlns="http://www.w3.org/1999/xhtml" src={`${el.src}${frag}`} poster={el.poster || undefined} controls playsInline preload="metadata"
+              autoPlay={media === 'autoplay'} muted={!!el.muted} loop={!!el.loop}
+              style={{ width: '100%', height: '100%', objectFit: el.fit === 'contain' ? 'contain' : 'cover', borderRadius: el.radius || 0, background: '#000', display: 'block' }} />
+          </foreignObject>
+        </g>
+      );
+    }
+    const r = Math.min(el.w, el.h) * 0.11;
+    return (
+      <g {...common}>
+        <defs><clipPath id={clip}><rect x={el.x} y={el.y} width={el.w} height={el.h} rx={el.radius || 0} /></clipPath></defs>
+        <g clipPath={`url(#${clip})`}>
+          <rect x={el.x} y={el.y} width={el.w} height={el.h} fill="#000" />
+          {el.poster ? <image href={el.poster} x={el.x} y={el.y} width={el.w} height={el.h} preserveAspectRatio={el.fit === 'contain' ? 'xMidYMid meet' : 'xMidYMid slice'} /> : null}
+        </g>
+        <circle cx={cx} cy={cy} r={r} fill="rgba(0,0,0,0.5)" />
+        <polygon points={`${cx - r * 0.35},${cy - r * 0.5} ${cx - r * 0.35},${cy + r * 0.5} ${cx + r * 0.55},${cy}`} fill="#fff" />
+      </g>
+    );
+  }
+
+  if (el.type === 'audio') {
+    if (media && el.src) {
+      return (
+        <g {...common}>
+          <foreignObject x={el.x} y={el.y} width={Math.max(el.w, 260)} height={Math.max(el.h, 54)}>
+            <audio xmlns="http://www.w3.org/1999/xhtml" src={el.src} controls preload="metadata" loop={!!el.loop} style={{ width: '100%' }} />
+          </foreignObject>
+        </g>
+      );
+    }
+    const size = Math.min(el.w, el.h);
+    const s = size / 24 * 0.55;
+    return (
+      <g {...common}>
+        <circle cx={cx} cy={cy} r={size / 2} fill={el.color || '#1f9d5a'} />
+        <g transform={`translate(${cx - 12 * s} ${cy - 12 * s}) scale(${s})`}>
+          <path d={SPEAKER.body} fill="#fff" />
+          <path d={SPEAKER.waves} fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" />
+        </g>
+      </g>
+    );
+  }
+
   if (BLOCK_TYPES.includes(el.type)) {
     // Charts, tables and QR codes (laid out in lib/blocks.js).
     return (
@@ -196,7 +248,7 @@ function Piece({ s }) {
 /**
  * One page as an SVG. `width` can be a CSS size (e.g. "100%") — the viewBox keeps everything in design units.
  */
-export default function DesignPage({ design, page, width = '100%', height, className, style, id, uidPrefix = '' }) {
+export default function DesignPage({ design, page, width = '100%', height, className, style, id, uidPrefix = '', media }) {
   const W = design.width;
   const H = design.height;
   const pid = `${uidPrefix}${page.id}`;
@@ -214,7 +266,7 @@ export default function DesignPage({ design, page, width = '100%', height, class
     >
       <Background bg={resolveBg(design, page)} w={W} h={H} pid={pid} />
       {page.elements.map((el) => (
-        <Element key={el.id} el={el} pid={pid} />
+        <Element key={el.id} el={el} pid={pid} media={media} />
       ))}
     </svg>
   );
