@@ -1,5 +1,6 @@
 import { getUser } from '@/lib/auth';
 import { one } from '@/lib/db';
+import { VISIBLE } from '@/lib/notify';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -15,7 +16,7 @@ export async function GET(request) {
     `SELECT COUNT(*) FILTER (WHERE read_at IS NULL)::int AS unread, COUNT(*)::int AS total,
             COALESCE(MAX(created_at)::text, '') AS latest, COALESCE(MAX(read_at)::text, '') AS last_read,
             COUNT(*) FILTER (WHERE status <> 'new')::int AS answered
-     FROM notifications WHERE user_id = $1`,
+     FROM notifications n WHERE n.user_id = $1 AND ${VISIBLE}`,
     [user.id]
   );
 
