@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import DesignPage from './DesignPage';
 import Avatar from './Avatar';
 
@@ -55,10 +55,13 @@ export function Thumb({ data, uid, thumb }) {
 
 const VIS = { private: 'Private', link: 'Anyone with link', public: 'Public' };
 
-export default function DesignCard({ d, mine, author, href, folders }) {
+export default function DesignCard({ d, mine, author, href, folders, selected, selecting, onSelect }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [starred, setStarred] = useState(!!d.starred);
+  useEffect(() => setStarred(!!d.starred), [d.starred]);
+  // While selecting several designs, clicking a design ticks it instead of opening it.
+  const pick = (e) => { if (selecting && onSelect) { e.preventDefault(); onSelect(); } };
   const [pickFolder, setPickFolder] = useState(false);
   async function star() {
     const on = !starred;
@@ -95,8 +98,11 @@ export default function DesignCard({ d, mine, author, href, folders }) {
   }
 
   return (
-    <div className="dcard" style={busy ? { opacity: 0.5 } : undefined}>
-      <Link href={target}><Thumb data={d.data} uid={d.id} thumb={d.thumb} /></Link>
+    <div className={`dcard ${selected ? 'selected' : ''} ${selecting ? 'selecting' : ''}`} style={busy ? { opacity: 0.5 } : undefined}>
+      <Link href={target} onClick={pick}><Thumb data={d.data} uid={d.id} thumb={d.thumb} /></Link>
+      {onSelect ? (
+        <button className={`dcard-check ${selected ? 'on' : ''}`} title={selected ? 'Unselect' : 'Select'} onClick={onSelect} aria-pressed={!!selected}>{selected ? '✓' : ''}</button>
+      ) : null}
       {d.starred !== undefined ? (
         <button className={`dcard-star ${starred ? 'on' : ''}`} title={starred ? 'Unstar' : 'Star'} onClick={star}>{starred ? '★' : '☆'}</button>
       ) : null}
@@ -116,7 +122,7 @@ export default function DesignCard({ d, mine, author, href, folders }) {
           {!folders.length ? <span className="small muted">Make a folder first (＋ New folder above).</span> : null}
         </div>
       ) : null}
-      <Link href={target} className="dcard-title">{d.title}</Link>
+      <Link href={target} className="dcard-title" onClick={pick}>{d.title}</Link>
       <div className="dcard-meta">
         {author ? (
           <Link href={`/u/${encodeURIComponent(author.username)}`} className="row" style={{ gap: 6 }}>

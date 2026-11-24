@@ -62,30 +62,31 @@ export default async function ViewPage({ params }) {
   const owner = { username: design.owner_username, name: design.owner_name, picture: design.owner_picture };
   const isDoc = design.data?.kind === 'doc';
 
+  // Laid out like the editor: a top bar, the design in the middle, pages along the bottom, details and
+  // comments on the right.
   return (
-    <main className="page">
-      <div className="viewer">
-        <DesignViewer
-          id={id} title={design.title} design={design.data} role={role} perms={perms} signedIn={!!user}
-          likes={likes.n} liked={liked} visibility={design.visibility}
-        />
-        <aside className="stack" style={{ gap: 16 }}>
-          <div className="card stack">
-            <h1 style={{ fontSize: 24, margin: 0 }}>{design.title}</h1>
+    <DesignViewer
+      id={id} title={design.title} design={design.data} role={role} perms={perms} signedIn={!!user}
+      likes={likes.n} liked={liked} visibility={design.visibility} owner={owner}
+      canEdit={canEdit(role)} editHref={user ? `/design/${id}` : `/api/auth/login?next=/design/${id}`}
+      commentCount={comments.length}
+      side={
+        <>
+          <div className="vw-card stack">
+            <h1 style={{ fontSize: 20, margin: 0 }}>{design.title}</h1>
             <Link href={`/u/${encodeURIComponent(owner.username)}`} className="row">
-              <Avatar user={owner} size={36} />
+              <Avatar user={owner} size={34} />
               <div><b>{owner.name || owner.username}</b><div className="small muted">@{owner.username}</div></div>
             </Link>
             <div className="small muted">
-              {isDoc ? 'Document' : `${design.width} × ${design.height}px · ${design.data.pages.length} page${design.data.pages.length > 1 ? 's' : ''}`} · {design.views} views · {remixes.n} remixes
+              {isDoc ? 'Document' : `${design.width} × ${design.height}px · ${design.data.pages?.length || 1} page${(design.data.pages?.length || 1) > 1 ? 's' : ''}`} · {design.views} views · {remixes.n} remixes
             </div>
             {remixOf ? <div className="small">Remix of <Link href={`/d/${remixOf.id}`} style={{ textDecoration: 'underline' }}>{remixOf.title}</Link> by @{remixOf.username}</div> : null}
-            {canEdit(role) ? (user ? <Link href={`/design/${id}`} className="btn btn-primary">✏️ Edit</Link> : <a href={`/api/auth/login?next=/design/${id}`} className="btn btn-primary">Sign in with Jace to edit</a>) : null}
             {!user && guest?.name ? <div className="small muted">Viewing as {guest.name}</div> : null}
           </div>
           {perms.comment || comments.length ? (
-            <div className="card" id="comments">
-              <h3>Comments ({comments.length})</h3>
+            <div className="vw-card" id="comments">
+              <h3 style={{ marginTop: 0 }}>Comments ({comments.length})</h3>
               <Comments
                 id={id}
                 canComment={perms.comment && (!!user || !!guest?.name)}
@@ -94,8 +95,8 @@ export default async function ViewPage({ params }) {
               />
             </div>
           ) : null}
-        </aside>
-      </div>
-    </main>
+        </>
+      }
+    />
   );
 }

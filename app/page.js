@@ -7,6 +7,8 @@ import DesignCard from '@/components/DesignCard';
 import QuickCreate from '@/components/QuickCreate';
 import DesignSearch from '@/components/DesignSearch';
 import FolderBar from '@/components/FolderBar';
+import DesignGrid from '@/components/DesignGrid';
+import AutoRefresh from '@/components/AutoRefresh';
 import { lighten, listCols } from '@/lib/preview';
 
 export const dynamic = 'force-dynamic';
@@ -125,8 +127,9 @@ export default async function Home({ searchParams }) {
         <DesignSearch initial={term} />
       </div>
       <FolderBar folders={folders} active={folder} />
+      <AutoRefresh />
       {mine.length ? (
-        <div className="grid">{mine.map((d) => <DesignCard key={d.id} d={d} mine folders={folders} />)}</div>
+        <DesignGrid designs={mine} folders={folders} />
       ) : (
         <div className="card center">
           <p style={{ fontSize: 40, margin: 0 }}>{starredOnly ? '⭐' : inFolder ? '📁' : '🎨'}</p>

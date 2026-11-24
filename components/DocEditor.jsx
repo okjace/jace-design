@@ -310,7 +310,7 @@ export default function DocEditor({ id, initialDesign, initialTitle, initialVisi
   return (
     <div className="doc-editor">
       <div className="ed-top">
-        <Link href="/" className="btn btn-sm" title="Home">🏠</Link>
+        <a href="/" className="btn btn-sm" title="Home" onClick={async (e) => { e.preventDefault(); try { await saver.now(); } catch {} location.href = '/'; }}>🏠</a>
         <input className="ed-title" value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Document title" />
         <span className={`ed-status save-${save}`} onClick={() => ['error', 'retrying', 'offline'].includes(save) && saver.retry()}>{saveLabel}</span>
         <button className="btn btn-sm" onClick={() => setModal('history')} title="Version history">🕘</button>

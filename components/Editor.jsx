@@ -615,7 +615,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
       registerFonts(next).catch(() => {});
     },
     onLocked: () => { lockedOut.current = true; setLost((cur) => cur || { reason: 'removed', view: false }); },
-    onSaved: () => { clearTimeout(thumbTimer.current); thumbTimer.current = setTimeout(makeThumb, 2500); },
+    onSaved: () => { clearTimeout(thumbTimer.current); thumbTimer.current = setTimeout(makeThumb, 700); },
     onRestore: (body) => {
       if (body?.design) { const d = normalizeDesign(body.design); designRef.current = d; setDesign(d); }
       if (typeof body?.title === 'string') setTitle(body.title);
@@ -1175,7 +1175,13 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
     <div className="editor">
       {/* ---------- top bar ---------- */}
       <div className="ed-top">
-        <Link href="/" className="btn btn-sm" title="Home">🏠</Link>
+        <a href="/" className="btn btn-sm" title="Home" onClick={async (e) => {
+          // Save and refresh the little preview first, so the home page shows your latest changes right away.
+          e.preventDefault();
+          setBusy('Saving…');
+          try { await saver.now(); clearTimeout(thumbTimer.current); await Promise.race([makeThumb(), new Promise((r) => setTimeout(r, 2500))]); } catch {}
+          location.href = '/';
+        }}>🏠</a>
         <button className="btn btn-sm" onClick={() => setModal(modal === 'resize' ? null : 'resize')}>📐 Resize</button>
         <button className="btn btn-sm" onClick={undo} disabled={!past.current.length} title="Undo (Ctrl+Z)">↶</button>
         <button className="btn btn-sm" onClick={redo} disabled={!future.current.length} title="Redo (Ctrl+Shift+Z)">↷</button>

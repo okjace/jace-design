@@ -210,7 +210,7 @@ export default function SheetEditor({ id, initialDesign, initialTitle, initialVi
   return (
     <div className="doc-editor sheet-editor">
       <div className="ed-top">
-        <Link href="/" className="btn btn-sm" title="Home">🏠</Link>
+        <a href="/" className="btn btn-sm" title="Home" onClick={async (e) => { e.preventDefault(); try { await saver.now(); } catch {} location.href = '/'; }}>🏠</a>
         <button className="btn btn-sm" onClick={undo} title="Undo (Ctrl+Z)">↶</button>
         <button className="btn btn-sm" onClick={redo} title="Redo (Ctrl+Y)">↷</button>
         <input className="ed-title" value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Spreadsheet title" />
