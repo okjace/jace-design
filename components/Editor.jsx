@@ -9,6 +9,7 @@ import ImageSearch from './ImageSearch';
 import PhotoLibrary from './PhotoLibrary';
 import AiImage from './AiImage';
 import CropModal from './CropModal';
+import CommandPalette, { ShortcutsModal } from './CommandPalette';
 import AppsPanel from './AppsPanel';
 import SpellCheck from './SpellCheck';
 import ContextMenu from './ContextMenu';
@@ -29,7 +30,7 @@ import { CHART_COLORS, CHART_TYPES, audioEl, chartEl, chartToCsv, clipLength, cs
 import { audioDuration, uploadMedia, videoInfo } from '@/lib/media';
 import {
   EMOJI, FONTS, GRADIENTS, PRESET_GROUPS, SWATCHES, blankPage, emojiEl, imageEl, lineEl, normalizeDesign,
-  scalePage, shapeEl, textEl, textFont, textHeight, uid, wrapText, ANIMATIONS, videoLength, TRANSITIONS, TRANSITION_NAMES, MASKS,
+  scalePage, shapeEl, textEl, textFont, textHeight, uid, wrapText, ANIMATIONS, videoLength, TRANSITIONS, TRANSITION_NAMES, MASKS, smartResizePage,
 } from '@/lib/design';
 import { TEMPLATES, templateDesign } from '@/lib/templates';
 import { ensureFonts, exportImage, exportJson, exportPdf, exportSvg, fileToDataUrl, renderPageToCanvas } from '@/lib/export';
@@ -153,6 +154,10 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
   const [pageIdx, setPageIdx] = useState(0);
   const [selId, setSelId] = useState(null);
   const [multi, setMulti] = useState([]); // several selected elements (ids)
+  // Rulers and grid (remembered in this browser); guide lines are saved with the design.
+  const [view, setView] = useState({ rulers: false, grid: 0 });
+  useEffect(() => { try { const v = JSON.parse(localStorage.getItem('jd_view') || 'null'); if (v) setView({ rulers: !!v.rulers, grid: Number(v.grid) || 0 }); } catch {} }, []);
+  const changeView = (patch) => setView((v) => { const n = { ...v, ...patch }; try { localStorage.setItem('jd_view', JSON.stringify(n)); } catch {} return n; });
   const [marquee, setMarquee] = useState(null); // the box being dragged to select
   const [editingId, setEditingId] = useState(null);
   const [panel, setPanel] = useState('templates');
@@ -526,6 +531,22 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
     pages.forEach((p) => p.elements.forEach((e) => e.type === 'text' && loadFont(e)));
   }
 
+  // ---------- magic resize: one design → copies in many sizes ----------
+  async function magicResize(sizes, onProgress) {
+    const d = designRef.current;
+    const { externalize } = await import('@/lib/blobs');
+    const { value: src } = await externalize(d);
+    const made = [];
+    for (let n = 0; n < sizes.length; n++) {
+      const z = sizes[n];
+      onProgress?.(`Making ${z.name} (${n + 1} of ${sizes.length})…`);
+      const copy = { ...src, width: z.w, height: z.h, pages: src.pages.map((p) => { const sp = smartResizePage(p, d.width, d.height, z.w, z.h); return { ...sp, elements: sp.elements.map(fixEl) }; }) };
+      const r = await fetch('/api/designs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: `${title} · ${z.name}`, design: copy }) });
+      if (r.ok) made.push({ ...z, id: (await r.json()).id });
+    }
+    return made;
+  }
+
   // ---------- resized copy ----------
   async function resizedCopy(nw, nh) {
     const d = designRef.current;
@@ -805,10 +826,14 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
   // ---------- keyboard + clipboard ----------
   useEffect(() => {
     const onKey = (e) => {
-      if (modal === 'present' || modal === 'history') return;
+      if (['present', 'history', 'palette', 'shortcuts'].includes(modal)) return;
       const mod = e.ctrlKey || e.metaKey;
       if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); saveNow(); return; }
+      if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); setModal('palette'); return; }
       if (isTyping(e.target)) return;
+      if (!mod && !e.altKey && e.key === '?') { e.preventDefault(); setModal('shortcuts'); return; }
+      if (!mod && !e.altKey && !sel && multi.length < 2 && (e.key === 'r' || e.key === 'R')) { changeView({ rulers: !view.rulers }); return; }
+      if (!mod && !e.altKey && e.key === "'") { changeView({ grid: view.grid ? 0 : Math.max(10, Math.round(Math.min(W, H) / 40 / 5) * 5) }); return; }
       if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
       if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
       if (mod && e.key.toLowerCase() === 'd') { e.preventDefault(); duplicateSel(); return; }
@@ -862,6 +887,42 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
     return { x: (e.clientX - r.left) / zoom, y: (e.clientY - r.top) / zoom };
   };
 
+  // ---------- guide lines ----------
+  const setGuides2 = (fn) => commit((d) => { const g = fn({ x: [...(d.guides?.x || [])], y: [...(d.guides?.y || [])] }); return { ...d, guides: g }; }, { history: false });
+  function dragGuide(e, axis, index) {
+    e.preventDefault(); e.stopPropagation();
+    snapshot();
+    const move = (ev) => {
+      const p = toDesign(ev);
+      setGuides2((g) => { g[axis][index] = Math.round(axis === 'x' ? p.x : p.y); return g; });
+    };
+    const up = (ev) => {
+      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
+      const p = toDesign(ev);
+      const off = axis === 'x' ? p.x < -10 || p.x > W + 10 : p.y < -10 || p.y > H + 10;
+      if (off) setGuides2((g) => { g[axis].splice(index, 1); return g; });
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }
+  function newGuide(e, axis) {
+    e.preventDefault();
+    const p = toDesign(e);
+    snapshot();
+    let index = -1;
+    setGuides2((g) => { g[axis].push(Math.round(axis === 'x' ? p.x : p.y)); index = g[axis].length - 1; return g; });
+    setTimeout(() => {
+      const move = (ev) => { const q = toDesign(ev); setGuides2((g) => { g[axis][index] = Math.round(axis === 'x' ? q.x : q.y); return g; }); };
+      const up = (ev) => {
+        window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
+        const q = toDesign(ev);
+        if (axis === 'x' ? q.x < 0 || q.x > W : q.y < 0 || q.y > H) setGuides2((g) => { g[axis].splice(index, 1); return g; });
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+    }, 0);
+  }
+
   function snapMove(el, nx, ny) {
     const t = 6 / zoom;
     const xs = [0, W / 2, W];
@@ -871,12 +932,19 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
       xs.push(o.x, o.x + o.w / 2, o.x + o.w);
       ys.push(o.y, o.y + o.h / 2, o.y + o.h);
     }
+    xs.push(...(design.guides?.x || []));
+    ys.push(...(design.guides?.y || []));
     const g = [];
     let bx = null, by = null;
     for (const off of [0, el.w / 2, el.w]) for (const c of xs) if (Math.abs(nx + off - c) < t && (bx == null || Math.abs(nx + off - c) < Math.abs(bx.d))) bx = { d: nx + off - c, c };
     for (const off of [0, el.h / 2, el.h]) for (const c of ys) if (Math.abs(ny + off - c) < t && (by == null || Math.abs(ny + off - c) < Math.abs(by.d))) by = { d: ny + off - c, c };
     if (bx) { nx -= bx.d; g.push({ v: true, at: bx.c }); }
     if (by) { ny -= by.d; g.push({ v: false, at: by.c }); }
+    // Grid on: snap to the nearest grid line when nothing else is closer.
+    if (view.grid) {
+      if (!bx) nx = Math.round(nx / view.grid) * view.grid;
+      if (!by) ny = Math.round(ny / view.grid) * view.grid;
+    }
     return { nx, ny, g };
   }
 
@@ -1201,6 +1269,61 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
   const cursor = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize' };
   const saveLabel = saver.label;
 
+  // Everything the command palette (Ctrl/⌘ + K) can do.
+  const commands = (() => {
+    const c = [];
+    const add = (group, label, run, keys) => c.push({ id: `${group}:${label}`, group, label, run, keys });
+    add('Add', 'Text box', () => addEl(withDefaults(textEl({ text: 'Your text here', fontSize: 48 * k, w: 600 * k }), false)));
+    add('Add', 'Heading', () => addEl(withDefaults(textEl({ text: 'Add a heading', fontFamily: 'Poppins', fontWeight: 700, fontSize: 110 * k, w: Math.min(W * 0.9, 1000 * k), align: 'center' }), true)));
+    add('Add', 'Rectangle', () => addEl(shapeEl('rect', { w: 300 * k, h: 300 * k })));
+    add('Add', 'Circle', () => addEl(shapeEl('ellipse', { w: 300 * k, h: 300 * k })));
+    add('Add', 'Line', () => addEl(lineEl({ w: 400 * k, h: 30 * k, strokeWidth: 8 * k })));
+    add('Add', 'Arrow', () => addEl(lineEl({ w: 400 * k, h: 30 * k, strokeWidth: 8 * k, arrow: true })));
+    add('Add', 'Bar chart', () => addEl(chartEl('bar', { w: Math.min(W * 0.8, 900 * k), h: Math.min(H * 0.7, 560 * k) })));
+    add('Add', 'Pie chart', () => addEl(chartEl('pie', { w: Math.min(W * 0.8, 900 * k), h: Math.min(H * 0.7, 560 * k) })));
+    add('Add', 'Table', () => addEl(tableEl({ w: Math.min(W * 0.8, 900 * k), h: Math.min(H * 0.5, 320 * k) })));
+    add('Add', 'QR code', () => addEl(qrEl({ w: 360 * k, h: 360 * k })));
+    add('Add', 'Sticky note', () => addSticky('#fde047'));
+    add('Add', 'Photo grid (2 × 2)', () => addGrid(GRIDS[2]));
+    add('Pages', 'New page', () => addPage());
+    add('Pages', 'Duplicate page', dupPage);
+    add('Pages', 'Delete page', delPage);
+    add('Pages', 'Next page', () => setPageIdx(Math.min(design.pages.length - 1, pi + 1)));
+    add('Pages', 'Previous page', () => setPageIdx(Math.max(0, pi - 1)));
+    design.pages.forEach((_, i) => add('Pages', `Go to page ${i + 1}`, () => { setPageIdx(i); setSelId(null); }));
+    add('Edit', 'Undo', undo, 'Ctrl+Z'); add('Edit', 'Redo', redo, 'Ctrl+Y');
+    add('Edit', 'Select everything', () => selectIds(page.elements.filter((x) => !x.hidden && !x.locked).map((x) => x.id)), 'Ctrl+A');
+    add('Edit', 'Group selected', groupSel, 'Ctrl+G'); add('Edit', 'Ungroup', () => (multi.length ? ungroupSel() : sel && updateSel({ group: undefined })), 'Ctrl+Shift+G');
+    add('Edit', 'Duplicate selected', () => (multi.length > 1 ? duplicateMany() : duplicateSel()), 'Ctrl+D');
+    add('Edit', 'Delete selected', () => (multi.length > 1 ? deleteMany() : deleteSel()), 'Del');
+    add('Edit', 'Bring to front', () => reorder('front')); add('Edit', 'Send to back', () => reorder('back'));
+    ['left', 'center', 'right', 'top', 'middle', 'bottom'].forEach((a) => add('Edit', `Align ${a}`, () => (multi.length > 1 ? alignMany(a) : alignSel(a))));
+    [['templates', 'Templates'], ['ai', 'AI tools'], ['elements', 'Elements'], ['icons', 'Icons'], ['text', 'Text'], ['photos', 'Photos'], ['uploads', 'Uploads'], ['background', 'Background'], ['brand', 'Brand kit'], ['apps', 'Apps'], ['layers', 'Layers']]
+      .forEach(([key, label]) => add('Open', label, () => setPanel(key)));
+    add('AI', 'Redesign this page with AI', () => setAi('page'));
+    add('AI', 'Add pages with AI', () => setAi('pages'));
+    add('AI', 'Redo the whole design with AI', () => setAi('redo'));
+    if (sel?.type === 'text') add('AI', 'Rewrite the selected text', () => setAi('text'));
+    add('View', view.rulers ? 'Hide rulers' : 'Show rulers', () => changeView({ rulers: !view.rulers }), 'R');
+    add('View', view.grid ? 'Hide grid' : 'Show grid', () => changeView({ grid: view.grid ? 0 : Math.max(10, Math.round(Math.min(W, H) / 40 / 5) * 5) }), "'");
+    if (design.guides?.x?.length || design.guides?.y?.length) add('View', 'Remove all guide lines', () => commit((d) => { const { guides: _g, ...rest } = d; return rest; }));
+    add('View', 'Zoom to fit', () => { setAutoFit(true); fit(); });
+    add('View', cursors ? 'Hide cursors' : 'Show cursors', toggleCursors);
+    add('View', 'Keyboard shortcuts', () => setModal('shortcuts'), '?');
+    add('File', isVideo ? 'Play video' : 'Present', () => setModal(isVideo ? 'play' : 'present'));
+    add('File', 'Download PNG (this page)', () => runExport('png'));
+    add('File', 'Download PDF', () => runExport('pdf'));
+    add('File', 'Download JPG', () => runExport('jpg'));
+    if (isVideo) add('File', 'Download video', () => runExport('video'));
+    add('File', 'Print', print);
+    add('File', 'Share', () => setModal('share'));
+    add('File', 'Resize / magic resize', () => setModal('resize'));
+    add('File', 'Mockups', () => setModal('mockups'));
+    add('File', 'Version history', () => setModal('history'));
+    add('File', 'Save now', saveNow, 'Ctrl+S');
+    return c;
+  })();
+
   return (
     <div className="editor">
       {/* ---------- top bar ---------- */}
@@ -1227,6 +1350,18 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
           title={cursors ? 'Cursors on: you see others’ cursors and they see yours. Click to turn off.' : 'Show cursors: see where others are pointing (and share yours)'}>
           🖱{cursors ? ' Cursors on' : ''}
         </button>
+        <button className="btn btn-sm" onClick={() => setModal('palette')} title="Find any action (Ctrl/⌘ + K)">⌘K</button>
+        <div style={{ position: 'relative' }}>
+          <button className={`btn btn-sm ${view.rulers || view.grid ? 'active' : ''}`} onClick={() => setModal(modal === 'view' ? null : 'view')} title="Rulers, grid and guides">📏</button>
+          {modal === 'view' ? (
+            <div className="dropdown">
+              <button onClick={() => changeView({ rulers: !view.rulers })}>{view.rulers ? '✓ ' : ''}Rulers <small>R</small></button>
+              {[0, 10, 20, 40, 80].map((g) => <button key={g} onClick={() => changeView({ grid: g })}>{view.grid === g ? '✓ ' : ''}{g ? `Grid every ${g}px` : 'No grid'}</button>)}
+              <button disabled={!design.guides?.x?.length && !design.guides?.y?.length} onClick={() => commit((d) => { const { guides: _g, ...rest } = d; return rest; })}>Remove guide lines</button>
+              <button onClick={() => setModal('shortcuts')}>⌨️ Keyboard shortcuts <small>?</small></button>
+            </div>
+          ) : null}
+        </div>
         <button className="btn btn-sm" onClick={() => setModal('history')} title="Version history">🕘</button>
         {isSite ? <button className="btn btn-sm" onClick={async () => { await saveNow(); window.open(`/s/${id}`, '_blank'); }}>🌐 View site</button> : null}
         {isVideo
@@ -1254,7 +1389,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
         <button className="btn btn-sm btn-white" onClick={() => setModal('share')}>🔗 Share</button>
       </div>
 
-      {modal === 'resize' ? <ResizeMenu W={W} H={H} onApply={resizeDesign} onCopy={resizedCopy} onClose={() => setModal(null)} /> : null}
+      {modal === 'resize' ? <ResizeMenu W={W} H={H} onApply={resizeDesign} onCopy={resizedCopy} onMagic={magicResize} onClose={() => setModal(null)} /> : null}
       {modal === 'template' ? <SaveTemplate id={id} title={title} beforeSave={saveNow} onClose={() => setModal(null)} /> : null}
       {ai ? (
         <AiHelper
@@ -1667,6 +1802,10 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
                 setMenu({ x: e.clientX, y: e.clientY });
               }}>
               <DesignPage id="export-svg" design={design} page={renderPage} width={W * zoom} height={H * zoom} uidPrefix="ed-" style={{ cursor: 'default' }} />
+              {view.grid ? <div className="grid-overlay" style={{ backgroundSize: `${view.grid * zoom}px ${view.grid * zoom}px` }} /> : null}
+              {(design.guides?.x || []).map((gx, i) => <div key={`gx${i}`} className="user-guide v" style={{ left: gx * zoom }} onPointerDown={(e) => dragGuide(e, 'x', i)} title="Drag to move · drag off the page to remove" />)}
+              {(design.guides?.y || []).map((gy, i) => <div key={`gy${i}`} className="user-guide h" style={{ top: gy * zoom }} onPointerDown={(e) => dragGuide(e, 'y', i)} title="Drag to move · drag off the page to remove" />)}
+              {view.rulers ? <Rulers W={W} H={H} zoom={zoom} onNewGuide={newGuide} /> : null}
               {guides.map((g, i) => (
                 <div key={i} className="guide" style={g.v ? { left: g.at * zoom, top: 0, width: 1, height: H * zoom } : { top: g.at * zoom, left: 0, height: 1, width: W * zoom }} />
               ))}
@@ -1918,6 +2057,8 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
             setPageIdx(pi + 1); setSelId(null);
           }} />
       ) : null}
+      {modal === 'palette' ? <CommandPalette commands={commands} onClose={() => setModal(null)} /> : null}
+      {modal === 'shortcuts' ? <ShortcutsModal onClose={() => setModal(null)} /> : null}
       {modal === 'history' ? <VersionHistory id={id} beforeSave={saveNow} onClose={() => setModal(null)} /> : null}
       {modal === 'present' ? <Presenter design={design} start={pi} remoteId={id} onClose={() => setModal(null)} /> : null}
       {modal === 'play' ? (
@@ -1930,6 +2071,22 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
       <AccessLost id={id} lost={lost} />
       {saver.notices}
     </div>
+  );
+}
+
+/** Rulers along the top and left of the page. Drag from one to make a guide line. */
+function Rulers({ W, H, zoom, onNewGuide }) {
+  const step = [5, 10, 25, 50, 100, 200, 250, 500, 1000, 2000].find((s) => s * zoom >= 60) || 2000;
+  const marks = (len) => Array.from({ length: Math.floor(len / step) + 1 }, (_, i) => i * step);
+  return (
+    <>
+      <div className="ruler h" style={{ width: W * zoom, backgroundSize: `${(step / 5) * zoom}px 100%` }} onPointerDown={(e) => onNewGuide(e, 'y')} title="Drag down to make a guide line">
+        {marks(W).map((m) => <span key={m} style={{ left: m * zoom }}>{m}</span>)}
+      </div>
+      <div className="ruler v" style={{ height: H * zoom, backgroundSize: `100% ${(step / 5) * zoom}px` }} onPointerDown={(e) => onNewGuide(e, 'x')} title="Drag right to make a guide line">
+        {marks(H).map((m) => <span key={m} style={{ top: m * zoom }}>{m}</span>)}
+      </div>
+    </>
   );
 }
 
@@ -1987,7 +2144,11 @@ function UserTemplates({ onPick }) {
 
 const UNITS = { px: 1, in: 96, cm: 37.7953, mm: 3.77953 };
 
-function ResizeMenu({ W, H, onApply, onCopy, onClose }) {
+function ResizeMenu({ W, H, onApply, onCopy, onMagic, onClose }) {
+  const [magic, setMagic] = useState(() => new Set());
+  const [magicMsg, setMagicMsg] = useState('');
+  const [made, setMade] = useState(null);
+  const allPresets = PRESET_GROUPS.flatMap((g) => g.items);
   const [w, setW] = useState(W);
   const [h, setH] = useState(H);
   const [unit, setUnit] = useState('px');
@@ -2027,6 +2188,28 @@ function ResizeMenu({ W, H, onApply, onCopy, onClose }) {
               </div>
             ))}
           </div>
+          <details className="magic-resize">
+            <summary><b>✨ Magic resize</b> <span className="small muted">— make copies in many sizes at once, rearranged to fit</span></summary>
+            <div className="row wrap" style={{ gap: 6, marginTop: 8 }}>
+              {allPresets.filter((p) => p.w !== W || p.h !== H).slice(0, 40).map((p) => (
+                <button key={p.name} className={`chip ${magic.has(p.name) ? 'active' : ''}`} onClick={() => setMagic((m) => { const n = new Set(m); if (n.has(p.name)) n.delete(p.name); else n.add(p.name); return n; })}>{p.icon} {p.name}</button>
+              ))}
+            </div>
+            <div className="row" style={{ marginTop: 8 }}>
+              <span className="small muted grow">{magicMsg}</span>
+              <button className="btn btn-primary" disabled={!magic.size || !!magicMsg} onClick={async () => {
+                const sizes = allPresets.filter((p) => magic.has(p.name));
+                setMade(await onMagic(sizes, setMagicMsg));
+                setMagicMsg('');
+              }}>Make {magic.size || ''} cop{magic.size === 1 ? 'y' : 'ies'}</button>
+            </div>
+            {made ? (
+              <div className="stack" style={{ gap: 4, marginTop: 8 }}>
+                <b className="small">Done! Open them:</b>
+                {made.map((m) => <a key={m.id} href={`/design/${m.id}`} target="_blank" rel="noreferrer" className="small" style={{ textDecoration: 'underline' }}>{m.icon} {m.name} ({m.w}×{m.h}) ↗</a>)}
+              </div>
+            ) : null}
+          </details>
           <div className="row wrap">
             <div className="grow" />
             <button className="btn" onClick={onClose}>Cancel</button>
