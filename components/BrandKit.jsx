@@ -109,9 +109,11 @@ export default function BrandKit({ brand, save, onColor, onFont, onLogo, fonts =
             e.target.value = '';
             if (!f) return;
             try {
-              const a = await fileToDataUrl(f, 800);
-              if (a.src.length > 680_000) throw new Error('That logo is too big. Try a smaller image (under about 500 KB).');
-              update({ logos: [...brand.logos, { id: Math.random().toString(36).slice(2, 10), name: f.name.slice(0, 60), ...a }] });
+              const a = await fileToDataUrl(f, 1200);
+              // Stored on its own; the brand kit just keeps a link to it.
+              const { externalize } = await import('@/lib/blobs');
+              const { value } = await externalize({ src: a.src });
+              update({ logos: [...brand.logos, { id: Math.random().toString(36).slice(2, 10), name: f.name.slice(0, 60), ...a, src: value.src }] });
             } catch (err) { setMsg(err.message || 'Could not add that logo.'); }
           }} />
         </>

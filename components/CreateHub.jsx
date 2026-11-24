@@ -233,6 +233,7 @@ export default function CreateHub() {
   const [drag, setDrag] = useState(false);
   const fileJson = useRef(null);
   const fileImg = useRef(null);
+  const fileSlides = useRef(null);
   const show = (t) => tab === 'All' || tab === t;
 
   async function importFiles(files) {
@@ -246,6 +247,22 @@ export default function CreateHub() {
         const design = normalizeDesign(parsed.design || parsed);
         return createFrom(parsed.title || json.name.replace(/(\.jdesign)?\.json$/i, ''), design);
       }
+      // PowerPoint: slides with their text, pictures, shapes and tables. PDF: each page becomes a page.
+      const pptx = list.find((f) => /\.pptx$/i.test(f.name));
+      if (pptx) {
+        const { pptxToDesign } = await import('@/lib/importers');
+        const d = await pptxToDesign(pptx, { onProgress: setMsg });
+        setMsg('Saving…');
+        return createFrom(pptx.name.replace(/\.pptx$/i, ''), normalizeDesign({ ...d, assets: [] }));
+      }
+      const pdf = list.find((f) => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
+      if (pdf) {
+        const { pdfToPages } = await import('@/lib/importers');
+        const d = await pdfToPages(pdf, { onProgress: setMsg, maxPages: 100 });
+        setMsg(d.total > d.pages.length ? `Added the first ${d.pages.length} of ${d.total} pages. Saving…` : 'Saving…');
+        return createFrom(pdf.name.replace(/\.pdf$/i, ''), normalizeDesign({ width: d.width, height: d.height, pages: d.pages, assets: [] }));
+      }
+      if (list.some((f) => /\.(ppt|key|odp)$/i.test(f.name))) { setMsg('Save it as .pptx (PowerPoint, Keynote and Google Slides can all do that) or as a PDF, then import that.'); return; }
       const docx = list.find((f) => /\.docx$/i.test(f.name));
       if (docx) {
         const mammoth = await import('mammoth/mammoth.browser');
@@ -262,7 +279,7 @@ export default function CreateHub() {
       }
       const images = list.filter((f) => f.type.startsWith('image/'));
       if (images.length) return createFrom(images[0].name.replace(/\.\w+$/, ''), await imagesToDesign(images));
-      setMsg('That file type is not supported yet. Try an image, SVG, Word (.docx), .jdesign.json, .html, .md or .txt file.');
+      setMsg('That file type is not supported yet. Try PowerPoint (.pptx), PDF, an image, SVG, Word (.docx), .jdesign.json, .html, .md or .txt file.');
     } catch (e) {
       setMsg(`Could not import that file: ${e.message}`);
     }
@@ -452,6 +469,10 @@ export default function CreateHub() {
         <section>
           <h2>📥 Import</h2>
           <div className="import-grid">
+            <div className="import-card" onClick={() => fileSlides.current?.click()}>
+              <div className="ico">📽️</div>
+              <div><b>PowerPoint & PDF</b><div className="muted small">.pptx slides become pages you can edit (text, pictures, shapes, tables). Each PDF page becomes a page.</div></div>
+            </div>
             <div className="import-card" onClick={() => fileImg.current?.click()}>
               <div className="ico">🖼️</div>
               <div><b>Images & SVGs</b><div className="muted small">PNG, JPG, WebP, GIF or SVG. Pick several to make one page each.</div></div>
@@ -474,6 +495,7 @@ export default function CreateHub() {
             </div>
           </div>
           <input ref={fileImg} type="file" accept="image/*" multiple hidden onChange={(e) => importFiles(e.target.files)} />
+          <input ref={fileSlides} type="file" accept=".pptx,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation" hidden onChange={(e) => { const f = [...e.target.files]; e.target.value = ''; importFiles(f); }} />
           <input ref={fileJson} type="file" accept=".json,.docx,.html,.htm,.md,.markdown,.txt" hidden onChange={(e) => importFiles(e.target.files)} />
           <div className="card" style={{ marginTop: 14 }}>
             <div className="row" style={{ alignItems: 'flex-start', gap: 16 }}>

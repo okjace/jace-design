@@ -4,7 +4,7 @@ import { one, q } from '@/lib/db';
 export const dynamic = 'force-dynamic';
 
 const HEX = /^#[0-9a-f]{6}$/i;
-const IMG = /^data:image\/(png|jpeg|webp|gif|svg\+xml);base64,[A-Za-z0-9+/=]+$/;
+const IMG = /^(data:image\/(png|jpeg|webp|gif|svg\+xml);base64,[A-Za-z0-9+/=]+|\/api\/(blobs\/[a-f0-9]{64}|media\/[A-Za-z0-9_-]{8,40}))$/;
 
 function clean(d = {}) {
   const colors = [...new Set((Array.isArray(d.colors) ? d.colors : []).filter((c) => HEX.test(c)).map((c) => c.toLowerCase()))].slice(0, 24);

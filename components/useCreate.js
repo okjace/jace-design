@@ -2,6 +2,7 @@
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { blankDesign } from '@/lib/design';
+import { externalize } from '@/lib/blobs';
 
 export function useCreate() {
   const router = useRouter();
@@ -11,9 +12,11 @@ export function useCreate() {
     setBusy(true);
     setError('');
     try {
-      const res = await fetch('/api/designs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, design }) });
+      // Pictures and fonts go up on their own first, so the design itself stays small (any size works).
+      const { value } = await externalize(design);
+      const res = await fetch('/api/designs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, design: value }) });
       if (res.status === 401) { location.href = `/api/auth/login?next=${encodeURIComponent(location.pathname)}`; return; }
-      if (res.status === 413) throw new Error('That file is too big. Try smaller images.');
+      if (res.status === 413) throw new Error('Could not create it in one go. Try again.');
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Could not create design');
       router.push(`/design/${data.id}`);

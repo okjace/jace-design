@@ -51,7 +51,7 @@ export const POST = handler(async (request) => {
   const m = IMG.exec(String(b.image || ''));
   if (!m) return json({ error: 'That isn’t a JPG, PNG or WebP image.' }, 400);
   const data = Buffer.from(m[3], 'base64');
-  if (data.length > 3_000_000) return json({ error: 'That photo is too big (3 MB at most after shrinking).' }, 413);
+  if (data.length > 4_200_000) return json({ error: 'Could not upload that photo. Try again.' }, 413);
   const thumb = String(b.thumb || '');
   if (!/^data:image\/(jpeg|webp|png);base64,[A-Za-z0-9+/=]+$/.test(thumb) || thumb.length > 120_000) return json({ error: 'Missing preview.' }, 400);
   const n = await one('SELECT COUNT(*)::int AS n FROM photos WHERE owner_id = $1', [user.id]);

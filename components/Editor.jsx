@@ -669,6 +669,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
         if (f.type.startsWith('video/') || /\.(mp4|m4v|webm|mov)$/.test(name)) await addVideo(f);
         else if (f.type.startsWith('audio/') || /\.(mp3|m4a|wav|ogg|flac|aac)$/.test(name)) await addSound(f);
         else if (f.type === 'application/pdf' || name.endsWith('.pdf')) await addPdf(f);
+        else if (name.endsWith('.pptx')) await addPptx(f);
         else if (/\.(ttf|otf|woff2?)$/.test(name)) { await addFontFile(f); setPanel('text'); }
         else if (name.endsWith('.json')) await addDesignFile(f);
         else alert(`“${f.name}” isn't a kind of file Jace Design can use. Try photos, videos, sounds, PDFs, fonts or Jace Design files.`);
@@ -723,6 +724,13 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
     if (page.elements.length) setPageIdx(pi + 1);
     setSelId(null);
     if (doc.numPages > n) alert(`Added the first ${n} pages of ${doc.numPages}.`);
+  }
+  async function addPptx(f) {
+    setBusy('Opening PowerPoint…');
+    const { pptxToDesign } = await import('@/lib/importers');
+    const d = await pptxToDesign(f, { onProgress: setBusy });
+    // Slides are added after this page, scaled to fit this design's size.
+    applyTemplate({ make: () => d.pages, width: d.width, height: d.height });
   }
   async function addDesignFile(f) {
     let j;
@@ -1472,8 +1480,8 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
           {panel === 'uploads' ? (
             <>
               <button className="btn btn-primary" style={{ width: '100%' }} onClick={() => uploadRef.current?.click()}>☁️ Upload files</button>
-              <input ref={uploadRef} type="file" accept="image/*,video/*,audio/*,.pdf,application/pdf,.ttf,.otf,.woff,.woff2,.json" multiple hidden onChange={(e) => { const fl = [...e.target.files]; e.target.value = ''; addFiles(fl); }} />
-              <p className="small muted">Photos, SVGs and GIFs · videos (MP4, WebM, up to 60 MB) · sounds (MP3, M4A, WAV) · PDFs (each page becomes a page) · fonts · Jace Design files. Drag files onto the canvas or paste them too.</p>
+              <input ref={uploadRef} type="file" accept="image/*,video/*,audio/*,.pdf,application/pdf,.pptx,.ttf,.otf,.woff,.woff2,.json" multiple hidden onChange={(e) => { const fl = [...e.target.files]; e.target.value = ''; addFiles(fl); }} />
+              <p className="small muted">Photos, SVGs and GIFs · videos (MP4, WebM, up to 60 MB) · sounds (MP3, M4A, WAV) · PDFs and PowerPoint (.pptx): each page or slide becomes a page · fonts · Jace Design files. Drag files onto the canvas or paste them too.</p>
               <h4>Your uploads</h4>
               {design.assets?.length ? (
                 <div className="tile-grid cols-2">
