@@ -1,6 +1,6 @@
 import { getUser, handler, json, requireUser } from '@/lib/auth';
 import { one, q } from '@/lib/db';
-import { chat, configured } from '@/lib/aiProviders';
+import { configured, streamChat } from '@/lib/aiProviders';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -35,11 +35,14 @@ export const POST = handler(async (request) => {
     return json({ error: `You’ve used today’s ${LIMIT()} AI requests. They come back tomorrow, or use “another AI” below.`, left: 0 }, 429);
   }
   try {
-    const { text } = await chat({
+    // The answer is streamed as plain text while it's written, so it starts showing right away.
+    const { stream } = await streamChat({
       system: String(b.system || 'You are the AI built into Jace Design, a design app. Follow the instructions exactly and reply only with what is asked for.').slice(0, 4000),
       prompt,
     });
-    return json({ text, left: Math.max(0, LIMIT() - row.count) });
+    return new Response(stream, {
+      headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store, no-transform', 'X-AI-Left': String(Math.max(0, LIMIT() - row.count)), 'X-Accel-Buffering': 'no' },
+    });
   } catch (e) {
     await refund();
     return json({ error: e.message }, e.status || 502);

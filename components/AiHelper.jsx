@@ -50,7 +50,7 @@ export default function AiHelper({ mode, context = {}, onApply, onClose, extra }
     setErr('');
     setBusy('✨ Thinking…');
     try {
-      const d = await askAi(prompt);
+      const d = await askAi(prompt, { onText: (t) => setBusy(`✨ Writing… ${t.length.toLocaleString()} characters`) });
       setLeft(d.left);
       setReply(d.text);
       setBusy('Adding it to your design…');

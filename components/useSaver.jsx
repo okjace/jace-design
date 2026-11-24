@@ -8,11 +8,11 @@ import { SAVE_LABELS, clearBackup, createSaver, readBackup } from '@/lib/saver';
  * (or, without merge, this editor's version is saved), and unsaved work from a closed tab comes back by itself.
  * Returns { state, label, changed, now, retry, hasUnsaved, version, setVersion, notices }.
  */
-export function useSaver({ id, version, getBody, onLocked, onSaved, onRestore, merge, onSent }) {
+export function useSaver({ id, version, getBody, onLocked, onSaved, onRestore, merge, onSent, prepare }) {
   const [state, setState] = useState('saved');
   const ref = useRef(null);
   const cbs = useRef({});
-  cbs.current = { getBody, onLocked, onSaved, onRestore, merge, onSent };
+  cbs.current = { getBody, onLocked, onSaved, onRestore, merge, onSent, prepare };
 
   useEffect(() => {
     const s = createSaver({
@@ -24,6 +24,7 @@ export function useSaver({ id, version, getBody, onLocked, onSaved, onRestore, m
       onSaved: () => cbs.current.onSaved?.(),
       onSent: (sent) => cbs.current.onSent?.(sent),
       merge: cbs.current.merge ? (theirs, title) => cbs.current.merge(theirs, title) : null,
+      prepare: cbs.current.prepare ? (body) => cbs.current.prepare(body) : null,
     });
     ref.current = s;
     // Unsaved work from last time (the tab closed or crashed before it reached the server):

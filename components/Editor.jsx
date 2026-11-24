@@ -14,6 +14,7 @@ import SaveTemplate from './SaveTemplate';
 import { AccessLost, useAccessWatch } from './AccessWatch';
 import { useSaver } from './useSaver';
 import { mergeDesigns } from '@/lib/merge';
+import { externalize, swap } from '@/lib/blobs';
 import VideoPlayer from './VideoPlayer';
 import LinkPicker, { linkLabel, sectionAnchor } from './LinkPicker';
 import IconSearch, { iconDataUrl } from './IconSearch';
@@ -589,6 +590,16 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
     version,
     getBody: () => ({ design: designRef.current, title: titleRef.current }),
     onSent: (sent) => { baseRef.current = sent.design; baseTitleRef.current = sent.title; },
+    // Big pictures, fonts and sounds go up once on their own; the design then just links to them.
+    prepare: async (body) => {
+      const { value, map } = await externalize(body.design);
+      if (map.size) {
+        // Use the links in the editor too, so what's on screen matches what's saved (and memory stays low).
+        const next = swap(designRef.current, map);
+        if (next !== designRef.current) { designRef.current = next; remoteRef.current = true; setDesign(next); }
+      }
+      return { ...body, design: value };
+    },
     merge: (theirData, theirTitle) => {
       // Someone saved while we were editing: keep both people's changes (see lib/merge.js).
       const theirs = normalizeDesign(theirData);

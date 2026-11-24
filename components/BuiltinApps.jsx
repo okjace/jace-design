@@ -53,7 +53,7 @@ function AskAiApp({ api, onClose }) {
         <div className="row wrap" style={{ gap: 8 }}>
           <button className="btn btn-primary" disabled={!ask.trim() || busy || ai.left === 0} onClick={async () => {
             setBusy(true); setErr('');
-            try { const d = await askAi(prompt); setLeft(d.left); setAnswer(d.text.trim()); } catch (e) { setErr(e.message); } finally { setBusy(false); }
+            try { const d = await askAi(prompt, { onText: (t) => setAnswer(t) }); setLeft(d.left); setAnswer(d.text.trim()); } catch (e) { setErr(e.message); } finally { setBusy(false); }
           }}>{busy ? '✨ Writing…' : '✨ Write it with Jace AI'}</button>
           <span className="small muted">{typeof ai.left === 'number' ? `${ai.left} left today` : ''}</span>
           {err ? <span className="small" style={{ color: 'var(--danger)' }}>{err}</span> : null}
