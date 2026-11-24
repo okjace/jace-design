@@ -48,7 +48,7 @@ export default function AiHelper({ mode, context = {}, onApply, onClose, extra }
   // Built-in AI: ask it here and use the answer straight away.
   async function makeIt() {
     setErr('');
-    setBusy('✨ Thinking…');
+    setBusy('✨ Thinking… (free AI can take up to a minute)');
     try {
       const json = !['text', 'doc', 'doc-edit'].includes(mode);
       const ask = (p) => askAi(p, { long: json, onText: (t) => setBusy(`✨ Writing… ${t.length.toLocaleString()} characters`) });

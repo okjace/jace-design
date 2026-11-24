@@ -3,7 +3,7 @@ import { one, q } from '@/lib/db';
 import { configured, streamChat } from '@/lib/aiProviders';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+export const maxDuration = 300; // free models can be slow; answers stream as they're written
 
 // Built-in AI on free AI services (see lib/aiProviders.js for which keys turn it on).
 // AI_DAILY_LIMIT is requests per person per day (default 40).
