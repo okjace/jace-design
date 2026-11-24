@@ -8,6 +8,7 @@ import AiHelper from './AiHelper';
 import ImageSearch from './ImageSearch';
 import PhotoLibrary from './PhotoLibrary';
 import AiImage from './AiImage';
+import CropModal from './CropModal';
 import AppsPanel from './AppsPanel';
 import SpellCheck from './SpellCheck';
 import ContextMenu from './ContextMenu';
@@ -28,7 +29,7 @@ import { CHART_COLORS, CHART_TYPES, audioEl, chartEl, chartToCsv, clipLength, cs
 import { audioDuration, uploadMedia, videoInfo } from '@/lib/media';
 import {
   EMOJI, FONTS, GRADIENTS, PRESET_GROUPS, SWATCHES, blankPage, emojiEl, imageEl, lineEl, normalizeDesign,
-  scalePage, shapeEl, textEl, textFont, textHeight, uid, wrapText, ANIMATIONS, videoLength, TRANSITIONS, TRANSITION_NAMES,
+  scalePage, shapeEl, textEl, textFont, textHeight, uid, wrapText, ANIMATIONS, videoLength, TRANSITIONS, TRANSITION_NAMES, MASKS,
 } from '@/lib/design';
 import { TEMPLATES, templateDesign } from '@/lib/templates';
 import { ensureFonts, exportImage, exportJson, exportPdf, exportSvg, fileToDataUrl, renderPageToCanvas } from '@/lib/export';
@@ -88,6 +89,18 @@ const FONT_COMBOS = [
   ['Archivo Black', 'Space Grotesk', 'LOUD & PROUD', 'Techy little subtitle'],
   ['Dancing Script', 'Raleway', 'With love', 'Handwritten charm'],
 ];
+
+// Photo grid layouts: boxes as fractions of the page [x, y, w, h].
+const GRIDS = [
+  [[0, 0, 0.5, 1], [0.5, 0, 0.5, 1]],
+  [[0, 0, 1 / 3, 1], [1 / 3, 0, 1 / 3, 1], [2 / 3, 0, 1 / 3, 1]],
+  [[0, 0, 0.5, 0.5], [0.5, 0, 0.5, 0.5], [0, 0.5, 0.5, 0.5], [0.5, 0.5, 0.5, 0.5]],
+  [[0, 0, 0.6, 1], [0.6, 0, 0.4, 0.5], [0.6, 0.5, 0.4, 0.5]],
+  [[0, 0, 1, 0.6], [0, 0.6, 1 / 3, 0.4], [1 / 3, 0.6, 1 / 3, 0.4], [2 / 3, 0.6, 1 / 3, 0.4]],
+  [0, 1, 2].flatMap((r) => [0, 1, 2].map((c) => [c / 3, r / 3, 1 / 3, 1 / 3])),
+];
+// An empty photo box: grey with a camera, until a photo is dropped in.
+const PLACEHOLDER = `data:image/svg+xml;base64,${typeof btoa === 'function' ? btoa('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400"><rect width="400" height="400" fill="#d6dbe2"/><text x="200" y="215" font-size="64" text-anchor="middle" font-family="sans-serif">📷</text></svg>'.replace(/📷/, '&#128247;')) : ''}`;
 
 const isTyping = (t) => t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
 
@@ -765,7 +778,19 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
       setBusy('');
     }
   }
+  // Photo grids: boxes (placeholders) that photos drop into.
+  function addGrid(g) {
+    const pad = Math.min(W, H) * 0.04, gap = Math.min(W, H) * 0.015;
+    const aw = W - pad * 2, ah = H - pad * 2;
+    const list = g.map(([x, y, w, h]) => imageEl({ src: PLACEHOLDER, placeholder: true, x: pad + x * aw + gap / 2, y: pad + y * ah + gap / 2, w: w * aw - gap, h: h * ah - gap, radius: Math.min(W, H) * 0.01 }));
+    const gid = uid();
+    commit((d) => mapPage(d, (p) => ({ ...p, elements: [...p.elements, ...list.map((e) => ({ ...e, group: gid }))] })));
+    selectIds(list.map((e) => e.id));
+  }
+  // Put a photo into a box: an empty photo-grid box or frame, keeping its size and shape.
+  const fillBox = (eid, src) => updateEl(eid, { src, placeholder: false, crop: null, fit: 'cover' });
   const insertAsset = (a) => {
+    if (!a.kind && sel?.type === 'image' && sel.placeholder) { fillBox(sel.id, a.src); return; }
     if (a.kind === 'audio') { addEl(audioEl({ src: a.src, name: a.name, duration: a.duration, w: 140 * k, h: 140 * k })); return; }
     const s = Math.min((W * 0.6) / a.width, (H * 0.6) / a.height);
     if (a.kind === 'video') {
@@ -1385,6 +1410,21 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
                   </button>
                 ))}
               </div>
+              <h4>Photo grids</h4>
+              <p className="small muted" style={{ margin: '-4px 0 8px' }}>Then drop photos onto the boxes (or select a box and pick a photo).</p>
+              <div className="tile-grid">
+                {GRIDS.map((g, gi) => (
+                  <button key={gi} className="tile" title="Add a photo grid" onClick={() => addGrid(g)}>
+                    <svg viewBox="0 0 100 100">{g.map(([x, y, w, h], i) => <rect key={i} x={x * 100 + 2} y={y * 100 + 2} width={w * 100 - 4} height={h * 100 - 4} rx="4" fill="#cdd3db" />)}</svg>
+                  </button>
+                ))}
+              </div>
+              <h4>Photo frames</h4>
+              <div className="tile-grid">
+                {MASKS.filter(([m]) => m).map(([m, l]) => (
+                  <button key={m} className="tile" title={`${m} frame`} style={{ fontSize: 26 }} onClick={() => addEl({ ...imageEl({ src: PLACEHOLDER, w: 420 * k, h: 420 * k, mask: m, placeholder: true }) })}>{l}</button>
+                ))}
+              </div>
               <h4>Charts</h4>
               <div className="tile-grid">
                 {CHART_TYPES.map(([t, n]) => (
@@ -1598,7 +1638,21 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
             ref={scrollRef}
             onPointerDown={(e) => { if (e.target === scrollRef.current) { setSelId(null); setMulti([]); setEditingId(null); } }}
             onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => { e.preventDefault(); addFiles([...e.dataTransfer.files]); }}
+            onDrop={async (e) => {
+              e.preventDefault();
+              const files = [...e.dataTransfer.files];
+              // Dropping a photo onto a photo box fills that box.
+              const t = e.target.closest?.('[data-id]');
+              const box = t ? page.elements.find((x) => x.id === t.getAttribute('data-id') && x.type === 'image') : null;
+              const img = files.find((f) => f.type.startsWith('image/'));
+              if (box && img && files.length === 1) {
+                const a = await fileToDataUrl(img);
+                commit((d) => ({ ...d, assets: [{ id: uid(), ...a }, ...(d.assets || [])] }), { history: false });
+                fillBox(box.id, a.src);
+                return;
+              }
+              addFiles(files);
+            }}
             onWheel={(e) => { if (e.ctrlKey || e.metaKey) { e.preventDefault(); setAutoFit(false); setZoom((z) => Math.max(0.05, Math.min(4, z * (e.deltaY > 0 ? 0.9 : 1.1)))); } }}
           >
             <div className="ed-canvas-wrap" ref={wrapRef} style={{ width: W * zoom, height: H * zoom, background: page.background?.type === 'none' ? 'repeating-conic-gradient(#ddd 0 25%, #fff 0 50%) 0 0 / 20px 20px' : undefined }}
@@ -1986,6 +2040,7 @@ function ResizeMenu({ W, H, onApply, onCopy, onClose }) {
 }
 
 function Props({ el, update, actions, onFont, k, fonts = FONTS, colors = [], isVideo, onPreview, isSite, pages = [], canAnimate, recolorIcon }) {
+  const [cropping, setCropping] = useState(false);
   const f = el.filters || {};
   const sh = el.shadow || {};
   const an = el.anim || {};
@@ -2047,7 +2102,30 @@ function Props({ el, update, actions, onFont, k, fonts = FONTS, colors = [], isV
           <div className="toggle-row">
             <button className={`btn ${el.strokeWidth ? 'active' : ''}`} onClick={() => update({ strokeWidth: el.strokeWidth ? 0 : Math.max(1, el.fontSize / 20), stroke: el.stroke || '#000000' })}>Outline</button>
             <button className={`btn ${el.bgColor ? 'active' : ''}`} onClick={() => update({ bgColor: el.bgColor ? '' : '#fde047' })}>Highlight</button>
+            <button className={`btn ${el.textGradient ? 'active' : ''}`} onClick={() => update({ textGradient: el.textGradient ? null : { from: el.color || '#7c3aed', to: '#06b6d4', angle: 90 } })}>Gradient</button>
+            <button className={`btn ${el.glow?.size ? 'active' : ''}`} onClick={() => update({ glow: el.glow?.size ? null : { color: '#3ddc84', size: Math.max(6, el.fontSize / 4) } })}>Neon glow</button>
+            <button className={`btn ${el.longShadow?.length ? 'active' : ''}`} onClick={() => update({ longShadow: el.longShadow?.length ? null : { color: 'rgba(0,0,0,0.3)', length: Math.max(4, Math.round(el.fontSize / 8)) } })}>Long shadow</button>
           </div>
+          <Range label="Curve" min={-100} max={100} value={Number(el.curve) || 0} onChange={(v) => update({ curve: Math.abs(v) < 3 ? 0 : v })} />
+          {el.textGradient ? (
+            <>
+              <ColorRow label="Gradient from" value={el.textGradient.from} onChange={(c) => update({ textGradient: { ...el.textGradient, from: c } })} colors={colors} />
+              <ColorRow label="Gradient to" value={el.textGradient.to} onChange={(c) => update({ textGradient: { ...el.textGradient, to: c } })} colors={colors} />
+              <Range label="Gradient angle" min={0} max={360} value={el.textGradient.angle ?? 90} onChange={(v) => update({ textGradient: { ...el.textGradient, angle: v } })} suffix="°" />
+            </>
+          ) : null}
+          {el.glow?.size ? (
+            <>
+              <ColorRow label="Glow color" value={el.glow.color} onChange={(c) => update({ glow: { ...el.glow, color: c } })} colors={colors} />
+              <Range label="Glow size" min={1} max={Math.max(40, Math.round(el.fontSize))} value={Math.round(el.glow.size)} onChange={(v) => update({ glow: { ...el.glow, size: v } })} />
+            </>
+          ) : null}
+          {el.longShadow?.length ? (
+            <>
+              <ColorRow label="Shadow color" value={/^#/.test(el.longShadow.color || '') ? el.longShadow.color : '#000000'} onChange={(c) => update({ longShadow: { ...el.longShadow, color: c } })} colors={colors} />
+              <Range label="Shadow length" min={1} max={60} value={Math.round(el.longShadow.length)} onChange={(v) => update({ longShadow: { ...el.longShadow, length: v } })} />
+            </>
+          ) : null}
           {el.strokeWidth ? <><ColorRow label="Outline color" value={el.stroke} onChange={(c) => update({ stroke: c })} colors={colors} /><Range label="Outline" min={0.5} max={Math.max(10, el.fontSize / 5)} step={0.5} value={el.strokeWidth} onChange={(v) => update({ strokeWidth: v })} /></> : null}
           {el.bgColor ? <ColorRow label="Highlight color" value={el.bgColor} onChange={(c) => update({ bgColor: c })} colors={colors} /> : null}
         </>
@@ -2109,7 +2187,19 @@ function Props({ el, update, actions, onFont, k, fonts = FONTS, colors = [], isV
             <button className={`btn ${el.flipY ? 'active' : ''}`} onClick={() => update({ flipY: !el.flipY })}>⇵ Flip</button>
             <button className={`btn ${el.fit === 'contain' ? 'active' : ''}`} onClick={() => update({ fit: el.fit === 'contain' ? 'cover' : 'contain' })}>Fit whole</button>
           </div>
-          {!el.icon ? <button className="btn btn-sm" style={{ marginTop: 6, width: '100%' }} onClick={actions.removeBg}>✂️ Remove background</button> : null}
+          <div className="toggle-row" style={{ marginTop: 6 }}>
+            {!el.placeholder ? <button className="btn" onClick={() => setCropping(true)}>⬚ Crop</button> : null}
+            {!el.icon && !el.placeholder ? <button className="btn" onClick={actions.removeBg}>✂️ Remove background</button> : null}
+          </div>
+          {cropping ? (
+            <CropModal src={el.src} initial={el.crop && el.natW ? el.crop : null} onClose={() => setCropping(false)}
+              onReset={() => update({ crop: null, h: el.natW ? el.w * (el.natH / el.natW) : el.h })}
+              onApply={({ crop, natW, natH }) => update({ crop, natW, natH, fit: el.fit === 'fill' ? 'cover' : el.fit, h: el.w * ((crop.h * natH) / (crop.w * natW)) })} />
+          ) : null}
+          <h4>Frame shape</h4>
+          <div className="toggle-row">
+            {MASKS.map(([m, l]) => <button key={m || 'none'} className={`btn ${(el.mask || '') === m ? 'active' : ''}`} title={m || 'No frame'} onClick={() => update({ mask: m })}>{l}</button>)}
+          </div>
           <h4>Rounded corners</h4>
           <Range label="Corners" min={0} max={Math.round(Math.min(el.w, el.h) / 2)} value={Math.round(el.radius || 0)} onChange={(v) => update({ radius: v })} />
           <div className="toggle-row">

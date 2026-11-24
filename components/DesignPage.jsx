@@ -1,5 +1,5 @@
 import { filterCss, HEART_PATH, lineBaseline, maskPath, shapePoints, textLines } from '@/lib/design';
-import { BLOCK_TYPES, SPEAKER, blockShapes, resolveBg } from '@/lib/blocks';
+import { BLOCK_TYPES, SPEAKER, blockShapes, curveGeometry, resolveBg } from '@/lib/blocks';
 
 // Renders one page of a design as SVG. Pure (no hooks) so it works on the server and the client.
 
@@ -65,27 +65,58 @@ export function Element({ el, pid, media }) {
     const lines = textLines(el);
     const anchor = el.align === 'center' ? 'middle' : el.align === 'right' ? 'end' : 'start';
     const tx = el.align === 'center' ? el.x + el.w / 2 : el.align === 'right' ? el.x + el.w : el.x;
+    const font = {
+      fontFamily: `"${el.fontFamily}", sans-serif`, fontSize: el.fontSize, fontWeight: el.fontWeight || 400,
+      fontStyle: el.italic ? 'italic' : 'normal', letterSpacing: el.letterSpacing || undefined, style: { whiteSpace: 'pre' },
+    };
+    // Curved text follows an arc; otherwise one line per tspan.
+    let arc = null;
+    if (el.curve) {
+      const g = curveGeometry(el);
+      const a0 = g.up ? -Math.PI / 2 - g.angle / 2 : Math.PI / 2 + g.angle / 2;
+      const a1 = g.up ? -Math.PI / 2 + g.angle / 2 : Math.PI / 2 - g.angle / 2;
+      arc = `M${g.cx + g.r * Math.cos(a0)} ${g.cy + g.r * Math.sin(a0)}A${g.r} ${g.r} 0 ${g.angle > Math.PI ? 1 : 0} ${g.up ? 1 : 0} ${g.cx + g.r * Math.cos(a1)} ${g.cy + g.r * Math.sin(a1)}`;
+    }
+    const words = (dx = 0, dy = 0) => (arc
+      ? <textPath href={`#cv-${key}`} startOffset="50%" textAnchor="middle">{(el.uppercase ? el.text.toUpperCase() : el.text).replace(/\s*\n\s*/g, ' ')}</textPath>
+      : lines.map((line, i) => <tspan key={i} x={tx + dx} y={el.y + lineBaseline(el, i) + dy}>{line || ' '}</tspan>));
+    const shadowCopies = el.longShadow?.length ? Math.min(60, Math.round(el.longShadow.length)) : 0;
+    const gid = `tg-${key}`;
+    const gv = el.textGradient ? gradientVector(el.textGradient.angle ?? 90) : null;
     return (
       <g {...common}>
         <rect x={el.x} y={el.y} width={el.w} height={el.h} fill="transparent" />
         {el.bgColor ? (() => { const px = el.fontSize * (el.bgPadX ?? 0.25), py = el.fontSize * (el.bgPadY ?? 0.1); return <rect x={el.x - px} y={el.y - py} width={el.w + px * 2} height={el.h + py * 2} rx={Math.min((el.h + py * 2) / 2, el.fontSize * (el.bgRadius ?? 0.2))} fill={el.bgColor} stroke={el.bgBorder || undefined} strokeWidth={el.bgBorder ? Math.max(1, el.fontSize / 16) : undefined} />; })() : null}
+        {arc || gv ? (
+          <defs>
+            {arc ? <path id={`cv-${key}`} d={arc} /> : null}
+            {gv ? (
+              <linearGradient id={gid} x1={gv.x1} y1={gv.y1} x2={gv.x2} y2={gv.y2}>
+                <stop offset="0" stopColor={el.textGradient.from || el.color} />
+                <stop offset="1" stopColor={el.textGradient.to || el.color} />
+              </linearGradient>
+            ) : null}
+          </defs>
+        ) : null}
+        {shadowCopies ? (
+          // Long / 3D shadow: copies stepping down-right behind the text.
+          <g fill={el.longShadow.color || 'rgba(0,0,0,0.35)'}>
+            {Array.from({ length: shadowCopies }, (_, s) => (
+              <text key={s} {...font} textAnchor={anchor} transform={arc ? `translate(${shadowCopies - s} ${shadowCopies - s})` : undefined}>{arc ? words() : words(shadowCopies - s, shadowCopies - s)}</text>
+            ))}
+          </g>
+        ) : null}
         <text
-          fontFamily={`"${el.fontFamily}", sans-serif`}
-          fontSize={el.fontSize}
-          fontWeight={el.fontWeight || 400}
-          fontStyle={el.italic ? 'italic' : 'normal'}
-          textDecoration={el.underline ? 'underline' : undefined}
-          letterSpacing={el.letterSpacing || undefined}
-          fill={el.color}
+          {...font}
+          textDecoration={el.underline && !arc ? 'underline' : undefined}
+          fill={gv ? `url(#${gid})` : el.color}
           stroke={el.strokeWidth ? el.stroke : undefined}
           strokeWidth={el.strokeWidth || undefined}
           paintOrder="stroke"
           textAnchor={anchor}
-          style={{ whiteSpace: 'pre' }}
+          style={{ whiteSpace: 'pre', filter: el.glow?.size ? `drop-shadow(0 0 ${el.glow.size / 2}px ${el.glow.color || '#3ddc84'}) drop-shadow(0 0 ${el.glow.size}px ${el.glow.color || '#3ddc84'})` : undefined }}
         >
-          {lines.map((line, i) => (
-            <tspan key={i} x={tx} y={el.y + lineBaseline(el, i)}>{line || ' '}</tspan>
-          ))}
+          {words()}
         </text>
       </g>
     );
