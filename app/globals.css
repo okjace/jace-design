@@ -723,3 +723,7 @@ h3 { font-size: 16px; margin: 0 0 8px; }
 .ruler.v { left: -22px; top: 0; width: 20px; cursor: e-resize; background-image: linear-gradient(to bottom, var(--line) 1px, transparent 1px); background-repeat: repeat-y; border-right: 1px solid var(--line); }
 .ruler span { position: absolute; padding: 1px 2px; }
 .ruler.v span { left: 1px; transform: rotate(-90deg); transform-origin: left top; margin-top: 18px; }
+.caption-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; max-height: 260px; overflow: auto; }
+.caption-row { display: flex; gap: 4px; align-items: center; }
+.caption-row input { min-width: 0; border: 1px solid var(--line); border-radius: 6px; padding: 3px 5px; font-size: 12px; background: var(--panel); color: var(--text); }
+.caption-row input[type=number] { width: 54px; }

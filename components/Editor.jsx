@@ -481,6 +481,8 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
     recolor,
     setBg,
     pages: design.pages,
+    design,
+    updateElement: (pIndex, eid, patch) => commit((d) => mapPage(d, (p) => ({ ...p, elements: p.elements.map((e) => (e.id === eid ? fixEl({ ...e, ...patch }) : e)) }), pIndex)),
     editText: (pIndex, eid, path, text) => commit((d) => mapPage(d, (p) => ({
       ...p,
       elements: p.elements.map((e) => {
@@ -1947,6 +1949,7 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
                     <button className="btn btn-sm" onClick={() => commit((d) => ({ ...d, pages: d.pages.map((p) => ({ ...p, duration: Number(page.duration) || 3, transition: page.transition || 'fade' })) }))}>Use for all scenes</button>
                   </div>
                   <div className="small muted" style={{ marginTop: 6 }}>Whole video: {Math.round(videoLength(design) * 10) / 10}s</div>
+                  <Captions design={design} commit={commit} busy={busy} setBusy={setBusy} />
                   <h4>Music</h4>
                   {design.audio ? (
                     <>
@@ -2071,6 +2074,62 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
       <AccessLost id={id} lost={lost} />
       {saver.notices}
     </div>
+  );
+}
+
+/** Video captions: made from the voiceover by speech recognition (in the browser), then editable. */
+function Captions({ design, commit, setBusy }) {
+  const caps = design.captions || [];
+  const st = design.captionStyle || { size: 0.05, color: '#ffffff', bg: true, position: 'bottom' };
+  const [open, setOpen] = useState(false);
+  const setCaps = (fn, opts) => commit((d) => ({ ...d, captions: fn(d.captions || []), captionStyle: d.captionStyle || st }), opts);
+  async function make() {
+    if (!design.voiceover?.src) { alert('Record a voiceover first (🎙 Voiceover on the timeline), then make captions from it.'); return; }
+    try {
+      const { makeCaptions } = await import('@/lib/captions');
+      const list = await makeCaptions(design.voiceover.src, setBusy);
+      const off = Number(design.voiceover.start) || 0;
+      if (!list.length) { alert('No speech was heard in the voiceover.'); return; }
+      setCaps(() => list.map((c) => ({ ...c, start: c.start + off, end: c.end + off })));
+      setOpen(true);
+    } catch (e) {
+      alert(`Couldn't make captions: ${e.message || e}. It works best in an up-to-date Chrome, Edge or the desktop app.`);
+    } finally { setBusy(''); }
+  }
+  return (
+    <>
+      <h4>Captions</h4>
+      <div className="row wrap" style={{ gap: 6 }}>
+        <button className="btn btn-sm btn-primary" onClick={make}>💬 {caps.length ? 'Make again from voiceover' : 'Make captions from voiceover'}</button>
+        {caps.length ? <button className="btn btn-sm" onClick={() => setOpen(!open)}>{open ? 'Hide' : `Edit (${caps.length})`}</button> : null}
+        {caps.length ? <button className="btn btn-sm btn-ghost" onClick={() => commit((d) => { const { captions, captionStyle, ...rest } = d; return rest; })}>Remove</button> : null}
+      </div>
+      <div className="small muted" style={{ marginTop: 4 }}>Speech is turned into text on your computer (the first time downloads about 150 MB).</div>
+      {caps.length ? (
+        <>
+          <div className="toggle-row" style={{ marginTop: 6 }}>
+            <button className={`btn ${st.position !== 'top' ? 'active' : ''}`} onClick={() => commit((d) => ({ ...d, captionStyle: { ...st, position: 'bottom' } }))}>Bottom</button>
+            <button className={`btn ${st.position === 'top' ? 'active' : ''}`} onClick={() => commit((d) => ({ ...d, captionStyle: { ...st, position: 'top' } }))}>Top</button>
+            <button className={`btn ${st.bg !== false ? 'active' : ''}`} onClick={() => commit((d) => ({ ...d, captionStyle: { ...st, bg: st.bg === false } }))}>Box</button>
+          </div>
+          <Range label="Caption size" min={2} max={12} step={0.5} value={Math.round((st.size || 0.05) * 1000) / 10} suffix="%" onChange={(v) => commit((d) => ({ ...d, captionStyle: { ...st, size: v / 100 } }), { history: false })} />
+          <ColorRow label="Caption color" value={st.color || '#ffffff'} onChange={(c) => commit((d) => ({ ...d, captionStyle: { ...st, color: c } }), { history: false })} />
+        </>
+      ) : null}
+      {open ? (
+        <div className="caption-list">
+          {caps.map((c, i) => (
+            <div key={i} className="caption-row">
+              <input type="number" step={0.1} value={c.start} onChange={(e) => setCaps((l) => l.map((x, j) => (j === i ? { ...x, start: Number(e.target.value) } : x)), { history: false })} title="Starts (s)" />
+              <input type="number" step={0.1} value={c.end} onChange={(e) => setCaps((l) => l.map((x, j) => (j === i ? { ...x, end: Number(e.target.value) } : x)), { history: false })} title="Ends (s)" />
+              <input className="grow" value={c.text} onChange={(e) => setCaps((l) => l.map((x, j) => (j === i ? { ...x, text: e.target.value } : x)), { history: false })} />
+              <button className="btn btn-sm btn-ghost" title="Remove" onClick={() => setCaps((l) => l.filter((_, j) => j !== i))}>✕</button>
+            </div>
+          ))}
+          <button className="btn btn-sm" onClick={() => setCaps((l) => { const last = l[l.length - 1]; const s0 = last ? last.end : 0; return [...l, { start: s0, end: s0 + 2, text: 'New caption' }]; })}>＋ Add a caption</button>
+        </div>
+      ) : null}
+    </>
   );
 }
 
