@@ -33,6 +33,7 @@ export default function DocEditor({ id, initialDesign, initialTitle, initialVisi
   const editRef = useRef(null);
   const rangeRef = useRef(null);
   const aiRange = useRef(null);
+  const aiWhole = useRef(false); // "Edit with AI" with nothing highlighted: edit the whole document
   const metaRef = useRef(meta);
   metaRef.current = meta;
   const titleRef = useRef(title);
@@ -269,13 +270,21 @@ export default function DocEditor({ id, initialDesign, initialTitle, initialVisi
 
   // ---------- AI ----------
   function openAi(mode) {
-    aiRange.current = rangeRef.current?.cloneRange() || null;
+    const r = rangeRef.current?.cloneRange() || null;
+    // Nothing highlighted? "Edit with AI" works on the whole document instead.
+    aiRange.current = r && !r.collapsed && r.toString().trim() ? r : null;
+    aiWhole.current = mode === 'doc-edit' && !aiRange.current;
     setAi(mode);
   }
   async function applyAi(reply) {
     const html = aiToDocHtml(reply);
     if (!html.trim()) throw new Error('The reply was empty.');
     if (ai === 'doc' && (!editRef.current.innerText.trim() || confirm('Replace the whole document with what the AI wrote?\n\nOK = replace · Cancel = add at the cursor'))) {
+      editRef.current.innerHTML = html;
+      afterEdit();
+      return;
+    }
+    if (ai === 'doc-edit' && aiWhole.current) {
       editRef.current.innerHTML = html;
       afterEdit();
       return;
@@ -459,7 +468,7 @@ export default function DocEditor({ id, initialDesign, initialTitle, initialVisi
       {ai ? (
         <AiHelper
           mode={ai}
-          context={{ title, text: aiRange.current?.toString() || '' }}
+          context={{ title, text: aiRange.current?.toString() || (ai === 'doc-edit' ? editRef.current?.innerText || '' : '') }}
           onApply={applyAi}
           onClose={() => setAi(null)}
         />

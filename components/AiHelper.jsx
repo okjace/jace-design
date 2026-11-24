@@ -13,7 +13,7 @@ const TITLES = {
   text: '✨ Rewrite with AI',
   palette: '🎨 Color palette with AI',
   doc: '✨ Write a document with AI',
-  'doc-edit': '✨ Edit selection with AI',
+  'doc-edit': '✨ Edit with AI',
 };
 
 const PLACEHOLDERS = {
@@ -50,11 +50,24 @@ export default function AiHelper({ mode, context = {}, onApply, onClose, extra }
     setErr('');
     setBusy('✨ Thinking…');
     try {
-      const d = await askAi(prompt, { onText: (t) => setBusy(`✨ Writing… ${t.length.toLocaleString()} characters`) });
+      const json = !['text', 'doc', 'doc-edit'].includes(mode);
+      const ask = (p) => askAi(p, { long: json, onText: (t) => setBusy(`✨ Writing… ${t.length.toLocaleString()} characters`) });
+      let d = await ask(prompt);
       setLeft(d.left);
       setReply(d.text);
       setBusy('Adding it to your design…');
-      await onApply(d.text, idea, setBusy);
+      try {
+        await onApply(d.text, idea, setBusy);
+      } catch (e) {
+        // A broken (not valid JSON) answer: ask once more, firmly, before giving up.
+        if (!json || !/JSON|no pages/i.test(e.message || '')) throw e;
+        setBusy('✨ That answer was broken, asking again…');
+        d = await ask(`${prompt}\n\nIMPORTANT: Your reply must be ONLY one complete, valid JSON object: double quotes, commas between items, every bracket closed. Keep it compact so it isn't cut off.`);
+        setLeft(d.left);
+        setReply(d.text);
+        setBusy('Adding it to your design…');
+        await onApply(d.text, idea, setBusy);
+      }
       onClose();
     } catch (e) {
       if (typeof e.left === 'number') setLeft(e.left);

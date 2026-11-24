@@ -39,6 +39,7 @@ export const POST = handler(async (request) => {
     const { stream } = await streamChat({
       system: String(b.system || 'You are the AI built into Jace Design, a design app. Follow the instructions exactly and reply only with what is asked for.').slice(0, 4000),
       prompt,
+      maxTokens: b.long ? 16000 : 8192, // whole designs need room, or the answer gets cut off
     });
     return new Response(stream, {
       headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store, no-transform', 'X-AI-Left': String(Math.max(0, LIMIT() - row.count)), 'X-Accel-Buffering': 'no' },
