@@ -45,6 +45,15 @@ export default function DesignViewer({
   useEffect(() => { registerFonts(design).then(() => setFontsReady((x) => x + 1)); }, [design]);
   useEffect(() => { if (window.innerWidth < 900) setPanel(false); }, []);
 
+  // Is someone presenting this design live right now? (Lights up the Live button.)
+  const [liveNow, setLiveNow] = useState(false);
+  useEffect(() => {
+    if (!isCanvas || typeof EventSource === 'undefined') return undefined;
+    const es = new EventSource(`/api/designs/${id}/present`);
+    es.addEventListener('slide', (e) => { try { setLiveNow(!!JSON.parse(e.data).live); } catch {} });
+    return () => es.close();
+  }, [id, isCanvas]);
+
   // Fit the page in the window (like the editor), unless you zoomed yourself.
   const fitNow = useCallback(() => {
     const s = scrollRef.current;
@@ -119,6 +128,11 @@ export default function DesignViewer({
         <button className={`btn btn-sm ${liked ? 'active' : ''}`} onClick={like} title={liked ? 'Unlike' : 'Like'}>{liked ? '♥' : '♡'} {likes}</button>
         {perms.remix ? <button className="btn btn-sm" onClick={remix}>🔁 {role === 'owner' ? 'Copy' : 'Remix'}</button> : null}
         {isCanvas ? <button className="btn btn-sm" onClick={() => setModal('present')}>▶ Present</button> : null}
+        {isCanvas ? (
+          <a className={`btn btn-sm ${liveNow ? 'live-on' : ''}`} href={`/d/${id}/live`} title={liveNow ? 'Someone is presenting this live: watch along' : 'Watch along when someone presents this live'}>
+            {liveNow ? '🔴 Live now' : '📡 Live'}
+          </a>
+        ) : null}
         {perms.print ? <a className="btn btn-sm" href={`/d/${id}/print`} target="_blank" rel="noreferrer">🖨 Print</a> : null}
         {perms.download ? (
           <div style={{ position: 'relative' }}>
@@ -204,7 +218,7 @@ export default function DesignViewer({
         await fetch(`/api/designs/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ visibility: v }) });
         router.refresh();
       }} onClose={() => setModal(null)} /> : null}
-      {modal === 'present' ? <Presenter design={design} start={i} onClose={() => setModal(null)} /> : null}
+      {modal === 'present' ? <Presenter design={design} start={i} remoteId={canEdit && signedIn ? id : undefined} onClose={() => setModal(null)} /> : null}
     </div>
   );
 }

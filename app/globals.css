@@ -684,3 +684,7 @@ h3 { font-size: 16px; margin: 0 0 8px; }
 .dcard-check.on { background: var(--brand); border-color: var(--brand); }
 .dcard.selected .thumb { outline: 3px solid var(--brand); outline-offset: 2px; }
 @media (hover: none) { .dcard-check { opacity: 1; } }
+.ai-img-wait { aspect-ratio: 1; border-radius: 9px; background: linear-gradient(110deg, var(--panel-2) 30%, var(--brand-soft) 50%, var(--panel-2) 70%); background-size: 200% 100%; animation: ai-shimmer 1.4s linear infinite; display: flex; align-items: center; justify-content: center; font-size: 22px; }
+@keyframes ai-shimmer { to { background-position: -200% 0; } }
+.ed-top .btn.live-on { background: #e40014; color: #fff; animation: live-pulse 1.6s ease-in-out infinite; }
+@keyframes live-pulse { 50% { box-shadow: 0 0 0 6px rgba(228, 0, 20, .25); } }

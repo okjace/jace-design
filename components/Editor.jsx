@@ -7,6 +7,7 @@ import ShareModal from './ShareModal';
 import AiHelper from './AiHelper';
 import ImageSearch from './ImageSearch';
 import PhotoLibrary from './PhotoLibrary';
+import AiImage from './AiImage';
 import AppsPanel from './AppsPanel';
 import SpellCheck from './SpellCheck';
 import ContextMenu from './ContextMenu';
@@ -729,6 +730,10 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
     setBusy('Opening PowerPoint…');
     const { pptxToDesign } = await import('@/lib/importers');
     const d = await pptxToDesign(f, { onProgress: setBusy });
+    if (d.googleFonts?.length) {
+      commit((x) => ({ ...x, googleFonts: [...new Set([...(x.googleFonts || []), ...d.googleFonts])] }), { history: false });
+      await Promise.all(d.googleFonts.map((g) => loadGoogleFont(g).catch(() => {})));
+    }
     // Slides are added after this page, scaled to fit this design's size.
     applyTemplate({ make: () => d.pages, width: d.width, height: d.height });
   }
@@ -1299,13 +1304,19 @@ export default function Editor({ id, initialDesign, initialTitle, initialVisibil
             <>
               <div className="toggle-row" style={{ marginBottom: 8 }}>
                 <button className={`btn ${photoSrc === 'jace' ? 'active' : ''}`} onClick={() => setPhotoSrc('jace')}>📷 Jace Photos</button>
-                <button className={`btn ${photoSrc === 'web' ? 'active' : ''}`} onClick={() => setPhotoSrc('web')}>🌐 Free web images</button>
+                <button className={`btn ${photoSrc === 'web' ? 'active' : ''}`} onClick={() => setPhotoSrc('web')}>🌐 Web</button>
+                <button className={`btn ${photoSrc === 'ai' ? 'active' : ''}`} onClick={() => setPhotoSrc('ai')}>✨ AI image</button>
               </div>
               {photoSrc === 'jace' ? (
                 <>
                   <PhotoLibrary compact onPick={(p, asBg) => pickPhoto({ full: `/api/photos/${p.id}?use=1`, title: p.title, creator: `@${p.username}`, license: 'Jace Photos', source: 'jace' }, asBg)} />
                   <p className="small muted" style={{ marginTop: 10 }}>Photos shared by the community. <a href="/photos?tab=mine" target="_blank" rel="noreferrer" style={{ textDecoration: 'underline' }}>Upload your own</a> in your Photos tab.</p>
                 </>
+              ) : photoSrc === 'ai' ? (
+                <AiImage
+                  onPick={(a) => { const asset = { id: uid(), src: a.src, width: a.width, height: a.height, credit: `AI picture: ${a.prompt}` }; commit((d) => ({ ...d, assets: [asset, ...(d.assets || [])] }), { history: false }); insertAsset(asset); }}
+                  onBackground={(src) => setBg({ type: 'image', src, color: '#ffffff' })}
+                />
               ) : <ImageSearch onPick={pickPhoto} />}
             </>
           ) : null}

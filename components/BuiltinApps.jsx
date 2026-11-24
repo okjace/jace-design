@@ -6,6 +6,7 @@ import { CHART_TYPES, chartEl, qrEl, tableEl } from '@/lib/blocks';
 import { textEl, shapeEl } from '@/lib/design';
 import { askAi, useAiStatus } from '@/lib/aiClient';
 import SpellCheck from './SpellCheck';
+import AiImage from './AiImage';
 
 // Apps that come with Jace Design. Each one gets `api` (what it may do to the design) and `onClose`.
 // api: { W, H, k, sel, addEl(el), recolor(colors), setBg(bg), openMockups(), removeBg(), panel(name) }
@@ -208,6 +209,7 @@ function ActionApp({ run, text }) {
 
 /** Apps that come with Jace Design: [id, icon, name, description, component] */
 export const BUILTIN_APPS = [
+  { id: 'aiimage', icon: '🎨', name: 'AI image generator', desc: 'Describe a picture and AI paints it', App: ({ api, onClose }) => <AiImage onPick={(a) => { const s2 = Math.min((api.W * 0.6) / a.width, (api.H * 0.6) / a.height); api.addImage(a.src, a.width * s2, a.height * s2); onClose(); }} onBackground={(src) => { api.setBg({ type: 'image', src, color: '#ffffff' }); onClose(); }} /> },
   { id: 'qr', icon: '🔳', name: 'QR code maker', desc: 'Turn a link or text into a QR code', App: QrApp },
   { id: 'chatgpt', icon: '🤖', name: 'AI writer', desc: 'Jace AI writes text for your design (or ask ChatGPT, Claude, Gemini)', App: AskAiApp },
   { id: 'spelling', icon: '🔤', name: 'Spell check', desc: 'Find and fix spelling mistakes in the whole design', App: ({ api, onClose }) => <SpellCheck api={api} onClose={onClose} /> },

@@ -1,4 +1,4 @@
-import { filterCss, HEART_PATH, lineBaseline, shapePoints, textLines } from '@/lib/design';
+import { filterCss, HEART_PATH, lineBaseline, maskPath, shapePoints, textLines } from '@/lib/design';
 import { BLOCK_TYPES, SPEAKER, blockShapes, resolveBg } from '@/lib/blocks';
 
 // Renders one page of a design as SVG. Pure (no hooks) so it works on the server and the client.
@@ -92,25 +92,33 @@ export function Element({ el, pid, media }) {
   }
 
   if (el.type === 'image') {
-    const clip = el.radius ? `clip-${key}` : null;
+    const mask = maskPath(el.mask, el.w, el.h);
+    const clip = el.radius || mask ? `clip-${key}` : null;
     const flip = el.flipX || el.flipY ? `translate(${el.flipX ? 2 * el.x + el.w : 0} ${el.flipY ? 2 * el.y + el.h : 0}) scale(${el.flipX ? -1 : 1} ${el.flipY ? -1 : 1})` : undefined;
+    const par = el.fit === 'fill' ? 'none' : el.fit === 'contain' ? 'xMidYMid meet' : `${/^x(Min|Mid|Max)Y(Min|Mid|Max)$/.test(el.focus || '') ? el.focus : 'xMidYMid'} slice`;
+    const c = el.crop && el.natW && el.natH ? el.crop : null;
     return (
       <g {...common}>
         {clip ? (
           <defs>
-            <clipPath id={clip}><rect x={el.x} y={el.y} width={el.w} height={el.h} rx={el.radius} /></clipPath>
+            <clipPath id={clip}>
+              {mask ? <path d={mask} transform={`translate(${el.x} ${el.y})`} /> : <rect x={el.x} y={el.y} width={el.w} height={el.h} rx={el.radius} />}
+            </clipPath>
           </defs>
         ) : null}
         <g clipPath={clip ? `url(#${clip})` : undefined}>
-          <image
-            href={el.src}
-            x={el.x} y={el.y} width={el.w} height={el.h}
-            preserveAspectRatio={el.fit === 'contain' ? 'xMidYMid meet' : `${/^x(Min|Mid|Max)Y(Min|Mid|Max)$/.test(el.focus || '') ? el.focus : 'xMidYMid'} slice`}
-            transform={flip}
-            style={{ filter: filterCss(el.filters) }}
-          />
+          {c ? (
+            // Cropped: show only part of the picture.
+            <g transform={flip}>
+              <svg x={el.x} y={el.y} width={el.w} height={el.h} viewBox={`${c.x * el.natW} ${c.y * el.natH} ${c.w * el.natW} ${c.h * el.natH}`} preserveAspectRatio={par}>
+                <image href={el.src} width={el.natW} height={el.natH} style={{ filter: filterCss(el.filters) }} />
+              </svg>
+            </g>
+          ) : (
+            <image href={el.src} x={el.x} y={el.y} width={el.w} height={el.h} preserveAspectRatio={par} transform={flip} style={{ filter: filterCss(el.filters) }} />
+          )}
         </g>
-        {el.strokeWidth ? <rect x={el.x} y={el.y} width={el.w} height={el.h} rx={el.radius || 0} fill="none" stroke={el.stroke} strokeWidth={el.strokeWidth} /> : null}
+        {el.strokeWidth ? (mask ? <path d={mask} transform={`translate(${el.x} ${el.y})`} fill="none" stroke={el.stroke} strokeWidth={el.strokeWidth} /> : <rect x={el.x} y={el.y} width={el.w} height={el.h} rx={el.radius || 0} fill="none" stroke={el.stroke} strokeWidth={el.strokeWidth} />) : null}
       </g>
     );
   }
